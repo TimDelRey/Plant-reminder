@@ -1,0 +1,231 @@
+package scheduler
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"plantcare/internal/testutil"
+)
+
+type fixture struct {
+	d       *sql.DB
+	userID  int64
+	plantID int64
+}
+
+func newFixture(t *testing.T, city string) fixture {
+	t.Helper()
+	d := testutil.DB(t)
+	f := fixture{d: d}
+	if err := d.QueryRow(`INSERT INTO users (email, password_hash, city_id) VALUES ('t@example.com','x',$1) RETURNING id`,
+		testutil.CityID(t, d, city)).Scan(&f.userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.QueryRow(`INSERT INTO plants (user_id, name) VALUES ($1,'Слива') RETURNING id`, f.userID).Scan(&f.plantID); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func (f fixture) connect(t *testing.T, channels ...string) {
+	t.Helper()
+	for _, c := range channels {
+		if _, err := f.d.Exec(`INSERT INTO user_channels (user_id, channel, status, external_id) VALUES ($1,$2,'connected','ext')`, f.userID, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (f fixture) event(t *testing.T, kind, rule, due, channels string) int64 {
+	t.Helper()
+	var r any
+	if rule != "" {
+		r = rule
+	}
+	var id int64
+	err := f.d.QueryRow(`INSERT INTO care_events (plant_id,title,category,recurrence_kind,recurrence_rule,next_due_at,channels)
+		VALUES ($1,'Полив','Полив',$2,$3,$4,string_to_array($5, ',')) RETURNING id`, f.plantID, kind, r, due, channels).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+type jobRow struct {
+	channel, status, lastErr string
+	scheduled                time.Time
+}
+
+func (f fixture) jobs(t *testing.T) []jobRow {
+	t.Helper()
+	rows, err := f.d.Query(`SELECT channel, status, coalesce(last_error,''), scheduled_at FROM notification_jobs ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []jobRow
+	for rows.Next() {
+		var j jobRow
+		if err := rows.Scan(&j.channel, &j.status, &j.lastErr, &j.scheduled); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
+func (f fixture) due(t *testing.T, id int64) string {
+	t.Helper()
+	var s string
+	if err := f.d.QueryRow(`SELECT to_char(next_due_at,'YYYY-MM-DD') FROM care_events WHERE id=$1`, id).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func at(s string) time.Time { t, _ := time.Parse(time.RFC3339, s); return t }
+
+func tick(t *testing.T, f fixture, now string) int {
+	t.Helper()
+	n, err := (&Scheduler{DB: f.d, NotifyHour: 9, Now: func() time.Time { return at(now) }}).Tick(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// До 09:00 местного времени уведомление ставится на утро, а не уходит сразу.
+func TestBeforeMorningIsScheduledForNineLocal(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "telegram")
+	f.event(t, "manual", "", "2026-11-23", "telegram")
+	tick(t, f, "2026-11-23T05:00:00Z") // 08:00 MSK
+	j := f.jobs(t)
+	if len(j) != 1 || j[0].status != "pending" {
+		t.Fatalf("jobs: %+v", j)
+	}
+	if want := at("2026-11-23T06:00:00Z"); !j[0].scheduled.Equal(want) { // 09:00 MSK
+		t.Errorf("scheduled_at = %v, want %v", j[0].scheduled, want)
+	}
+}
+
+// После утреннего времени задание создаётся «на сейчас».
+func TestAfterMorningIsScheduledNow(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "telegram")
+	f.event(t, "manual", "", "2026-11-23", "telegram")
+	now := "2026-11-23T10:00:00Z"
+	tick(t, f, now)
+	if j := f.jobs(t); len(j) != 1 || !j[0].scheduled.Equal(at(now)) {
+		t.Fatalf("jobs: %+v", j)
+	}
+}
+
+// Пояс пользователя берётся из его города: во Владивостоке (UTC+10) 24-е число уже наступило, в Москве — нет.
+func TestTimezoneOfUsersCity(t *testing.T) {
+	now := "2026-11-23T15:00:00Z" // 01:00 24 ноября во Владивостоке, 18:00 23 ноября в Москве
+
+	f := newFixture(t, "Владивосток")
+	f.connect(t, "telegram")
+	f.event(t, "manual", "", "2026-11-24", "telegram")
+	if n := tick(t, f, now); n != 1 {
+		t.Fatalf("Владивосток: обработано %d, ожидалось 1", n)
+	}
+	if j := f.jobs(t); len(j) != 1 || !j[0].scheduled.Equal(at("2026-11-23T23:00:00Z")) { // 09:00 VLAT 24-го
+		t.Errorf("Владивосток: %+v", j)
+	}
+
+	m := newFixture(t, "Москва")
+	m.connect(t, "telegram")
+	m.event(t, "manual", "", "2026-11-24", "telegram")
+	if n := tick(t, m, now); n != 0 {
+		t.Errorf("Москва: событие на завтра не должно созревать, обработано %d", n)
+	}
+}
+
+// Ежедневное событие: сегодня одно уведомление, следующее создаётся на следующий день утром.
+func TestDailyEventNextNotificationTomorrowMorning(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "telegram")
+	id := f.event(t, "rrule", "FREQ=DAILY", "2026-11-23", "telegram")
+
+	tick(t, f, "2026-11-23T10:00:00Z")
+	tick(t, f, "2026-11-23T10:01:00Z") // повторный проход в тот же день — дубля нет
+	if n := len(f.jobs(t)); n != 1 {
+		t.Fatalf("после двух проходов за день заданий %d, ожидалось 1", n)
+	}
+	if got := f.due(t, id); got != "2026-11-24" {
+		t.Fatalf("next_due_at = %s, ожидалось 2026-11-24", got)
+	}
+
+	tick(t, f, "2026-11-24T04:00:00Z") // 07:00 MSK завтра — слот ещё впереди
+	j := f.jobs(t)
+	if len(j) != 2 || !j[1].scheduled.Equal(at("2026-11-24T06:00:00Z")) {
+		t.Fatalf("jobs: %+v", j)
+	}
+	if got := f.due(t, id); got != "2026-11-25" {
+		t.Errorf("next_due_at = %s, ожидалось 2026-11-25", got)
+	}
+}
+
+// Ручное событие уведомляет один раз и снова — только после смены даты пользователем.
+func TestManualEventNotifiesOnceUntilDateChanged(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "telegram")
+	id := f.event(t, "manual", "", "2026-11-23", "telegram")
+
+	tick(t, f, "2026-11-23T10:00:00Z")
+	tick(t, f, "2026-11-24T10:00:00Z")
+	tick(t, f, "2026-11-25T10:00:00Z")
+	if n := len(f.jobs(t)); n != 1 {
+		t.Fatalf("заданий %d, ожидалось 1", n)
+	}
+	if got := f.due(t, id); got != "2026-11-23" {
+		t.Errorf("next_due_at у ручного события не должен меняться автоматически: %s", got)
+	}
+
+	if _, err := f.d.Exec(`UPDATE care_events SET next_due_at = '2026-11-26' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, f, "2026-11-26T10:00:00Z")
+	if n := len(f.jobs(t)); n != 2 {
+		t.Errorf("после смены даты заданий %d, ожидалось 2", n)
+	}
+}
+
+// Без фолбеков: уведомления только в выбранные каналы; неподключённый канал — failed, в другой не переотправляется.
+func TestNoFallbackBetweenChannels(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk", "max") // telegram не подключён
+	f.event(t, "manual", "", "2026-11-23", "telegram,vk")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	got := map[string]jobRow{}
+	for _, j := range f.jobs(t) {
+		got[j.channel] = j
+	}
+	if len(got) != 2 {
+		t.Fatalf("каналы в заданиях: %v (max не выбран — задания быть не должно)", got)
+	}
+	if got["telegram"].status != "failed" || got["telegram"].lastErr == "" {
+		t.Errorf("telegram: %+v", got["telegram"])
+	}
+	if got["vk"].status != "pending" {
+		t.Errorf("vk: %+v", got["vk"])
+	}
+}
+
+// Неактивные и будущие события не обрабатываются.
+func TestInactiveAndFutureIgnored(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "telegram")
+	id := f.event(t, "manual", "", "2026-11-23", "telegram")
+	f.event(t, "manual", "", "2026-12-01", "telegram")
+	if _, err := f.d.Exec(`UPDATE care_events SET active=false WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if n := tick(t, f, "2026-11-23T10:00:00Z"); n != 0 {
+		t.Errorf("обработано %d, ожидалось 0", n)
+	}
+}

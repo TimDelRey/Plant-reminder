@@ -1,0 +1,1125 @@
+openapi: 3.0.3
+info:
+  title: Уход за растениями — API
+  version: 1.0.0
+  description: |
+    API сервиса напоминаний об уходе за растениями. Веб-интерфейс использует тот же самый API,
+    поэтому **любое действие, доступное в интерфейсе, доступно и здесь**.
+
+    ## Авторизация
+    Два равнозначных способа для всех ручек `/api/*`, кроме `/api/auth/*`, `/api/cities` и документации:
+
+    * **Cookie-сессия** (`session`) — выдаётся при `POST /api/auth/login` и `POST /api/auth/register`.
+    * **Персональный API-токен** — `Authorization: Bearer <token>`. Создаётся в разделе «Аккаунт»
+      (или `POST /api/tokens`), значение показывается один раз.
+
+    ## Часовой пояс и время уведомлений
+    Часовой пояс пользователя определяется его городом (`city_id`). Уведомления создаются утром
+    по местному времени пользователя. Даты (`next_due_at`) — календарные, без времени (`YYYY-MM-DD`).
+
+    ## Ошибки
+    Все ошибки имеют единый формат `{"error": {"code": "...", "message": "...", "fields": {...}}}`.
+
+    ## Источники данных
+    Справочник городов основан на данных [GeoNames](https://www.geonames.org/), лицензия CC BY 4.0.
+  license:
+    name: CC BY 4.0 (данные городов — GeoNames)
+servers:
+  - url: /
+tags:
+  - name: auth
+    description: Регистрация, вход, сброс пароля
+  - name: account
+    description: Профиль, город, пароль, удаление аккаунта
+  - name: tokens
+    description: Персональные API-токены
+  - name: cities
+    description: Справочник городов РФ с часовыми поясами
+  - name: plants
+    description: Растения
+  - name: events
+    description: События ухода
+  - name: channels
+    description: Каналы уведомлений (MAX, VK, Telegram)
+  - name: internal
+    description: Вебхуки платформ — вызываются MAX/VK/Telegram, не пользователями
+  - name: docs
+    description: Документация API
+
+paths:
+  /api/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Регистрация
+      description: Создаёт аккаунт и сразу открывает сессию (cookie `session`).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            example: { email: user@example.com, password: "correct horse battery", city_id: 1 }
+      responses:
+        '201':
+          description: Аккаунт создан
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetSession' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Вход по email и паролю
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: user@example.com, password: "correct horse battery" }
+      responses:
+        '200':
+          description: Вход выполнен
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetSession' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Выход (завершает текущую сессию)
+      security: []
+      responses:
+        '204': { description: Сессия завершена }
+
+  /api/auth/password-reset/request:
+    post:
+      tags: [auth]
+      operationId: requestPasswordReset
+      summary: Запросить сброс пароля
+      description: |
+        Отправляет на email, указанный при регистрации, письмо со ссылкой `/reset-password?token=...`
+        (токен живёт 1 час, одноразовый). Ответ всегда одинаковый — независимо от того, существует ли аккаунт.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequest' }
+      responses:
+        '200':
+          description: Если аккаунт существует — письмо отправлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/password-reset/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmPasswordReset
+      summary: Установить новый пароль по токену из письма
+      description: Меняет пароль и отзывает все сессии и API-токены пользователя.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetConfirm' }
+      responses:
+        '204': { description: Пароль изменён }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/me:
+    get:
+      tags: [account]
+      operationId: getMe
+      summary: Текущий пользователь
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [account]
+      operationId: updateMe
+      summary: Сменить город (и, соответственно, часовой пояс)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMeRequest' }
+      responses:
+        '200':
+          description: Профиль обновлён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [account]
+      operationId: deleteMe
+      summary: Удалить аккаунт и все данные
+      description: Необратимо удаляет пользователя, его растения, события, каналы, сессии и токены (право на удаление данных, 152-ФЗ). Требуется подтверждение паролем.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteAccountRequest' }
+      responses:
+        '204': { description: Аккаунт удалён }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/me/password:
+    patch:
+      tags: [account]
+      operationId: changePassword
+      summary: Сменить пароль
+      description: Требует текущий пароль. Остальные сессии пользователя завершаются, текущая остаётся.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '204': { description: Пароль изменён }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/tokens:
+    get:
+      tags: [tokens]
+      operationId: listTokens
+      summary: Список своих API-токенов (без значений)
+      responses:
+        '200':
+          description: Токены
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [tokens]
+      operationId: createToken
+      summary: Создать API-токен
+      description: Значение токена (`token`) возвращается **один раз**, в базе хранится только его хэш.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTokenRequest' }
+            example: { name: "Скрипт домашней автоматизации", expires_in_days: 90 }
+      responses:
+        '201':
+          description: Токен создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedApiToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/tokens/{id}:
+    delete:
+      tags: [tokens]
+      operationId: revokeToken
+      summary: Отозвать API-токен
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '204': { description: Токен отозван }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/cities:
+    get:
+      tags: [cities]
+      operationId: searchCities
+      summary: Поиск города РФ (автокомплит)
+      description: Поиск по началу названия без учёта регистра; без `q` возвращает самые крупные города. Доступен без авторизации (нужен при регистрации).
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 100 }
+          description: Часть названия города
+          example: Екат
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 15 }
+      responses:
+        '200':
+          description: Найденные города
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/City' }
+
+  /api/plants:
+    get:
+      tags: [plants]
+      operationId: listPlants
+      summary: Список своих растений
+      responses:
+        '200':
+          description: Растения
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Plant' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [plants]
+      operationId: createPlant
+      summary: Добавить растение
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlantInput' }
+            example: { name: Слива, emoji: "🟣" }
+      responses:
+        '201':
+          description: Растение создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plant' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/plants/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [plants]
+      operationId: getPlant
+      summary: Растение вместе с событиями ухода
+      responses:
+        '200':
+          description: Растение и события
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlantDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [plants]
+      operationId: updatePlant
+      summary: Изменить растение
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlantPatch' }
+      responses:
+        '200':
+          description: Растение обновлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plant' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [plants]
+      operationId: deletePlant
+      summary: Удалить растение (вместе с его событиями)
+      responses:
+        '204': { description: Удалено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/plants/{id}/events:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [events]
+      operationId: listPlantEvents
+      summary: События ухода за растением
+      responses:
+        '200':
+          description: События, отсортированные по дате
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [events]
+      operationId: createEvent
+      summary: Добавить событие ухода
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventInput' }
+            example:
+              title: Подкормка минеральными удобрениями
+              category: Подкормка
+              description: Комплексное весеннее удобрение по приствольному кругу
+              recurrence_kind: rrule
+              recurrence_rule: FREQ=YEARLY
+              recurrence_note: Ежегодно, весна
+              next_due_at: "2027-04-10"
+              channels: [telegram]
+      responses:
+        '201':
+          description: Событие создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/plant-reference/search:
+    get:
+      tags: [plants]
+      operationId: searchPlantReference
+      summary: Что есть в справочнике растений (Perenual) по запросу
+      description: |
+        Показывает, какие виды и сорта есть в справочнике по названию, чтобы заранее понять, что можно подтянуть.
+        Русские названия популярных растений переводятся встроенным словарём (слива → plum); латинские и английские
+        названия работают как есть. Если запрос пришлось сократить (например, «слива бербанк» → «plum»),
+        это сказано в `query_note`: сорт справочник не различает. Результаты с `details_available=false` найдены,
+        но данные ухода по ним недоступны на текущем тарифе. Выбранный вид передаётся в
+        `GET /api/plants/{id}/care-suggestions?species_id=…`.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 100 }
+          example: Слива Бербанк
+      responses:
+        '200':
+          description: Найденные варианты (или пояснение, почему их нет)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferenceSearch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/plants/{id}/care-suggestions:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [events]
+      operationId: getCareSuggestions
+      summary: Подобрать уход за растением по справочнику (предпросмотр)
+      description: |
+        Строит события ухода **только из данных справочника Perenual** и ничего не сохраняет. «Дефолтных» событий нет:
+        если данных нет, `events` пуст, а `coverage` и `notice` объясняют, что именно не нашлось.
+        Без `species_id` вид подбирается по названию растения, а `match.quality` показывает, насколько совпадение точное:
+        `exact` — найдено как есть, `approximate` — ближайший вид (в `quality_note` объяснение, например «сорт не различается»),
+        `chosen` — вид выбран вручную. С `species_id` берутся данные конкретного вида из `/api/plant-reference/search`.
+        Каналы в событиях — подключённые каналы пользователя. Выбранные события сохраняются через
+        `POST /api/plants/{id}/events/import`.
+      parameters:
+        - name: species_id
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+          description: Вид из результатов поиска справочника
+      responses:
+        '200':
+          description: Предложенные события и карта «что нашлось»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CareSuggestion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/plants/{id}/events/import:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [events]
+      operationId: importCare
+      summary: Сохранить выбранные события ухода пачкой
+      description: |
+        Сохраняет переданные `events` (обычно — выбранные пользователем из `care-suggestions`, но подойдёт любой набор,
+        например составленный агентом) одним действием: либо все, либо ни одного, если хоть одно событие не прошло
+        валидацию (ошибки по полям вида `events[0].next_due_at`). Событий «по умолчанию» нет — пустой список отклоняется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportCareRequest' }
+      responses:
+        '201':
+          description: Созданные события
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/events/upcoming:
+    get:
+      tags: [events]
+      operationId: listUpcomingEvents
+      summary: Лента ближайших дел по всем растениям
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 6 }
+      responses:
+        '200':
+          description: Ближайшие активные события по возрастанию даты (просроченные — первыми)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UpcomingEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/events/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [events]
+      operationId: updateEvent
+      summary: Изменить событие
+      description: Частичное обновление. Смена `next_due_at` у ручного события снова ставит его на уведомление.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventPatch' }
+      responses:
+        '200':
+          description: Событие обновлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [events]
+      operationId: deleteEvent
+      summary: Удалить событие
+      responses:
+        '204': { description: Удалено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/events/{id}/complete:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [events]
+      operationId: completeEvent
+      summary: Отметить выполненным
+      description: |
+        Пересчитывает `next_due_at`: для `recurrence_kind=rrule` — ближайшая дата по правилу строго после
+        сегодняшней; для `manual` — та же дата через год (пользователь может поправить через «Изменить»).
+        Если у правила больше нет повторений, событие становится неактивным.
+      responses:
+        '200':
+          description: Событие после пересчёта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/channels:
+    get:
+      tags: [channels]
+      operationId: listChannels
+      summary: Статус подключения по всем каналам
+      responses:
+        '200':
+          description: Три канала — MAX, VK, Telegram
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/channels/{channel}/connect:
+    parameters:
+      - { $ref: '#/components/parameters/Channel' }
+    post:
+      tags: [channels]
+      operationId: connectChannel
+      summary: Начать подключение канала
+      description: |
+        Выдаёт одноразовый код подключения (TTL 15 минут) и инструкцию. Бот не может написать
+        пользователю первым, поэтому пользователь сам отправляет код боту (Telegram — по диплинку
+        `?start=<код>`). После получения кода вебхуком статус становится `connected`.
+      responses:
+        '200':
+          description: Канал в статусе `pending`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
+
+  /api/channels/{channel}/disconnect:
+    parameters:
+      - { $ref: '#/components/parameters/Channel' }
+    post:
+      tags: [channels]
+      operationId: disconnectChannel
+      summary: Отключить канал
+      responses:
+        '200':
+          description: Канал отключён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/channels/{channel}/status:
+    parameters:
+      - { $ref: '#/components/parameters/Channel' }
+    get:
+      tags: [channels]
+      operationId: getChannelStatus
+      summary: Статус канала (для поллинга)
+      responses:
+        '200':
+          description: Текущий статус
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /webhooks/telegram:
+    post:
+      tags: [internal]
+      operationId: webhookTelegram
+      summary: Вебхук Telegram
+      description: Проверяется заголовком `X-Telegram-Bot-Api-Secret-Token`. Обрабатывает `/start <код>`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Принято
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /webhooks/vk:
+    post:
+      tags: [internal]
+      operationId: webhookVK
+      summary: Вебхук VK Callback API
+      description: Отвечает на handshake `type=confirmation` строкой подтверждения; проверяет поле `secret`. Обрабатывает `message_new`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Принято (`ok` или код подтверждения)
+          content:
+            text/plain:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /webhooks/max:
+    post:
+      tags: [internal]
+      operationId: webhookMAX
+      summary: Вебхук MAX
+      description: Проверяется заголовком `X-Max-Bot-Api-Secret`. Обрабатывает сообщения с кодом подключения.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Принято
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/openapi.yaml:
+    get:
+      tags: [docs]
+      operationId: getOpenAPI
+      summary: Спецификация OpenAPI (этот документ)
+      security: []
+      responses:
+        '200':
+          description: YAML-спецификация
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /api/docs:
+    get:
+      tags: [docs]
+      operationId: getDocs
+      summary: Swagger UI
+      security: []
+      responses:
+        '200':
+          description: HTML-страница документации
+          content:
+            text/html:
+              schema: { type: string }
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Сессионная cookie (httpOnly, Secure, SameSite=Lax), выдаётся при входе.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Персональный API-токен из раздела «Аккаунт».
+
+  headers:
+    SetSession:
+      description: Устанавливает cookie `session` (httpOnly, SameSite=Lax; Secure в проде)
+      schema: { type: string }
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    Channel:
+      name: channel
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ChannelName' }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос (например, недействительный токен)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Нет или недействительна авторизация
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Действие запрещено (например, неверный текущий пароль)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Не найдено (или принадлежит другому пользователю)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Конфликт (например, email уже занят)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Validation:
+      description: Ошибка валидации; `error.fields` содержит сообщения по полям
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Превышен лимит запросов
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotConfigured:
+      description: Канал не настроен на сервере (нет токена бота)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: validation_failed }
+            message: { type: string, example: Проверьте введённые данные }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              example: { email: Некорректный email }
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, example: true }
+
+    ChannelName:
+      type: string
+      enum: [max, vk, telegram]
+    EventCategory:
+      type: string
+      enum:
+        - Полив
+        - Влагозарядковый полив
+        - Обрезка санитарная
+        - Обрезка формирующая
+        - Подкормка
+        - Обработка от болезней и вредителей
+        - Побелка стволов
+        - Защита от грызунов
+        - Удаление поросли
+        - Прореживание завязей
+        - Уборка листвы и падалицы
+        - Перекопка приствольного круга
+        - Сбор урожая
+        - Другое
+    RecurrenceKind:
+      type: string
+      enum: [rrule, manual]
+      description: |
+        `rrule` — календарное правило RFC 5545 (полив, подкормка), следующая дата считается автоматически.
+        `manual` — привязка к фенофазе, дата сдвигается пользователем вручную.
+
+    City:
+      type: object
+      required: [id, name, region, timezone]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, example: Екатеринбург }
+        region: { type: string, example: Свердловская Область }
+        timezone: { type: string, description: "IANA-имя часового пояса", example: Asia/Yekaterinburg }
+
+    User:
+      type: object
+      required: [id, email, city, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        city: { $ref: '#/components/schemas/City' }
+        created_at: { type: string, format: date-time }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, city_id]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        city_id: { type: integer, format: int64 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    PasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    PasswordResetConfirm:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string }
+        password: { type: string, minLength: 8, maxLength: 128 }
+    UpdateMeRequest:
+      type: object
+      required: [city_id]
+      properties:
+        city_id: { type: integer, format: int64 }
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, minLength: 8, maxLength: 128 }
+    DeleteAccountRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        expires_in_days: { type: integer, minimum: 1, maximum: 3650, description: Не задано — бессрочный }
+    ApiToken:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+    CreatedApiToken:
+      allOf:
+        - $ref: '#/components/schemas/ApiToken'
+        - type: object
+          required: [token]
+          properties:
+            token: { type: string, description: Значение токена — показывается один раз }
+
+    PlantInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        emoji: { type: string, maxLength: 16, description: По умолчанию 🌱 }
+    PlantPatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        emoji: { type: string, maxLength: 16 }
+    Plant:
+      type: object
+      required: [id, name, emoji, events_count, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        emoji: { type: string }
+        events_count: { type: integer }
+        next_due_at: { type: string, format: date, nullable: true, description: Ближайшая дата среди активных событий }
+        created_at: { type: string, format: date-time }
+    PlantDetail:
+      allOf:
+        - $ref: '#/components/schemas/Plant'
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/CareEvent' }
+
+    CareEvent:
+      type: object
+      required: [id, plant_id, title, category, description, recurrence_kind, recurrence_note, next_due_at, channels, active]
+      properties:
+        id: { type: integer, format: int64 }
+        plant_id: { type: integer, format: int64 }
+        title: { type: string }
+        category: { $ref: '#/components/schemas/EventCategory' }
+        description: { type: string }
+        recurrence_kind: { $ref: '#/components/schemas/RecurrenceKind' }
+        recurrence_rule:
+          type: string
+          nullable: true
+          description: RRULE по RFC 5545 без DTSTART (начало — `next_due_at`); только при `recurrence_kind=rrule`
+          example: FREQ=WEEKLY;INTERVAL=2
+        recurrence_note: { type: string, description: Человекочитаемая периодичность, example: "Ежегодно, до распускания почек" }
+        next_due_at: { type: string, format: date }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ChannelName' }
+          description: Каналы, в которые уйдёт напоминание (без фолбеков)
+        active: { type: boolean }
+    EventInput:
+      type: object
+      required: [title, category, recurrence_kind, next_due_at]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        category: { $ref: '#/components/schemas/EventCategory' }
+        description: { type: string, maxLength: 2000, default: "" }
+        recurrence_kind: { $ref: '#/components/schemas/RecurrenceKind' }
+        recurrence_rule: { type: string, nullable: true, maxLength: 200, description: Обязательно при rrule }
+        recurrence_note: { type: string, maxLength: 200, default: "" }
+        next_due_at: { type: string, format: date }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ChannelName' }
+          default: []
+        active: { type: boolean, default: true }
+    EventPatch:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        category: { $ref: '#/components/schemas/EventCategory' }
+        description: { type: string, maxLength: 2000 }
+        recurrence_kind: { $ref: '#/components/schemas/RecurrenceKind' }
+        recurrence_rule: { type: string, nullable: true, maxLength: 200 }
+        recurrence_note: { type: string, maxLength: 200 }
+        next_due_at: { type: string, format: date }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ChannelName' }
+        active: { type: boolean }
+    UpcomingEvent:
+      type: object
+      required: [event, plant]
+      properties:
+        event: { $ref: '#/components/schemas/CareEvent' }
+        plant:
+          type: object
+          required: [id, name, emoji]
+          properties:
+            id: { type: integer, format: int64 }
+            name: { type: string }
+            emoji: { type: string }
+
+    ImportCareRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventInput' }
+    SuggestedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventInput'
+        - type: object
+          required: [source]
+          properties:
+            source:
+              type: string
+              enum: [perenual]
+              description: "Событие построено из данных справочника Perenual"
+    Candidate:
+      type: object
+      required: [id, common_name, scientific, other_names, details_available]
+      properties:
+        id: { type: integer }
+        common_name: { type: string, example: "Plum" }
+        scientific: { type: string, example: "Prunus domestica" }
+        other_names: { type: array, items: { type: string } }
+        image_url: { type: string }
+        details_available:
+          type: boolean
+          description: "Можно ли получить данные ухода по этому виду на текущем тарифе (бесплатный — только виды с id 1–3000)"
+    ReferenceSearch:
+      type: object
+      required: [configured, query, results]
+      properties:
+        configured: { type: boolean, description: "Задан ли ключ Perenual на сервере" }
+        query: { type: string, description: "Что реально искали в справочнике (после перевода)" }
+        query_note: { type: string, description: "Пояснение, если запрос пришлось сократить (сорт отброшен)" }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+        notice: { type: string, description: "Пояснение, если результатов нет или справочник недоступен" }
+    PlantMatch:
+      type: object
+      required: [species_id, common_name, scientific, sunlight, quality, quality_note]
+      properties:
+        species_id: { type: integer }
+        common_name: { type: string, example: "Plum" }
+        scientific: { type: string, example: "Prunus domestica" }
+        image_url: { type: string }
+        sunlight:
+          type: array
+          items: { type: string }
+          description: Освещение по-русски (полутень, яркое солнце…)
+        care_level: { type: string }
+        quality:
+          type: string
+          enum: [exact, approximate, chosen]
+          description: "exact — найдено как есть; approximate — ближайший вид (см. quality_note); chosen — выбрано вручную"
+        quality_note: { type: string }
+    Coverage:
+      type: object
+      required: [field, label, available, detail]
+      properties:
+        field: { type: string, enum: [watering, pruning, fertilizing] }
+        label: { type: string, example: "Полив" }
+        available: { type: boolean, description: "Дал ли справочник данные по этому аспекту ухода" }
+        detail: { type: string, description: "Что нашлось или почему данных нет" }
+    CareSuggestion:
+      type: object
+      required: [source, configured, coverage, events]
+      properties:
+        source:
+          type: string
+          enum: [perenual, none]
+          description: "none — справочник не дал данных (события пусты)"
+        configured: { type: boolean, description: "Задан ли ключ Perenual на сервере" }
+        match:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PlantMatch'
+        coverage:
+          type: array
+          items: { $ref: '#/components/schemas/Coverage' }
+        notice: { type: string, description: "Пояснение, если данных нет" }
+        attribution: { type: string, description: "Атрибуция источника (показывать пользователю)" }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/SuggestedEvent' }
+    ChannelStatus:
+      type: object
+      required: [channel, status, configured]
+      properties:
+        channel: { $ref: '#/components/schemas/ChannelName' }
+        status:
+          type: string
+          enum: [disconnected, pending, connected]
+        configured: { type: boolean, description: Настроен ли бот этого канала на сервере }
+        connected_at: { type: string, format: date-time, nullable: true }
+        link:
+          nullable: true
+          description: Заполнено только в статусе `pending`
+          allOf:
+            - $ref: '#/components/schemas/ChannelLink'
+    ChannelLink:
+      type: object
+      required: [code, expires_at, instruction]
+      properties:
+        code: { type: string, example: K7P2QX }
+        expires_at: { type: string, format: date-time }
+        deep_link: { type: string, nullable: true, description: "Ссылка на бота с кодом (если платформа поддерживает)", example: "https://t.me/my_bot?start=K7P2QX" }
+        instruction: { type: string, example: Нажмите «Открыть бота» и отправьте /start }

@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+bin/
+web/node_modules/
+web/dist/
+graphify-out/
+.claude/
+.vscode/
+.idea/
+.git
+*.log
+.DS_Store
+CLAUDE.md
+AGENTS.md
+*.local
+*.local.*

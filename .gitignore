@@ -1,0 +1,32 @@
+# секреты (шаблон — .env.example)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# сборка и зависимости
+bin/
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+*.test
+coverage.out
+
+# граф знаний graphify (генерируется: graphify update .)
+graphify-out/
+
+# локальные настройки Claude Code и IDE
+.claude/
+.vscode/
+.idea/
+
+# мусор
+*.log
+.DS_Store
+
+# инструкции для агентов и локальные файлы
+CLAUDE.md
+AGENTS.md
+*.local
+*.local.*

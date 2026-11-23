@@ -1,0 +1,4 @@
+# Домен берётся из переменной окружения DOMAIN; Caddy сам получает Let's Encrypt-сертификат и редиректит HTTP -> HTTPS
+{$DOMAIN:localhost} {
+	reverse_proxy app:8080
+}
