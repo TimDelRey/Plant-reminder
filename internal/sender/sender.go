@@ -1,5 +1,3 @@
-// Package sender — отдельная доменная область отправки уведомлений.
-// Ничего не знает про растения и события ухода: видит только generic-задачи из notification_jobs.
 package sender
 
 import (
@@ -33,7 +31,6 @@ type Message struct {
 	Body  string
 }
 
-// Text — сообщение одной строкой для платформ без заголовков.
 func (m Message) Text() string {
 	if m.Body == "" {
 		return m.Title
@@ -41,14 +38,12 @@ func (m Message) Text() string {
 	return m.Title + "\n\n" + m.Body
 }
 
-// Sender — адаптер одной платформы.
 type Sender interface {
 	Send(ctx context.Context, externalID string, msg Message) error
 }
 
 var ErrChannelNotConfigured = errors.New("канал не настроен на сервере")
 
-// Dispatcher — единая точка входа для отправки в любой канал.
 type Dispatcher struct {
 	mu      sync.RWMutex
 	senders map[Channel]Sender

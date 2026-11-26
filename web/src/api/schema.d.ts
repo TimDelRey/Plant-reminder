@@ -484,6 +484,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/run-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Разовый прогон планировщика и очереди отправки
+         * @description Для serverless-деплоя (`BACKGROUND_WORKERS=false`): внешний таймер (раз в час) будит приложение, оно создаёт
+         *     задания по созревшим событиям и отправляет очередь. Защищено секретом `INTERNAL_SECRET`: заголовок
+         *     `X-Internal-Secret` либо `payload` таймер-триггера Yandex Cloud (тот же вызов принимается и на `POST /`).
+         *     Если секрет не настроен, эндпоинт отвечает 404.
+         *
+         */
+        post: operations["runJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhooks/telegram": {
         parameters: {
             query?: never;
@@ -1749,6 +1773,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    runJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Прогон выполнен */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Обработано созревших событий */
+                        events: number;
+                        /** @description Обработано заданий отправки */
+                        jobs: number;
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];

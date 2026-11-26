@@ -22,21 +22,16 @@ import (
 	"plantcare/internal/sender"
 )
 
-// Паритет «действие ↔ ручка API ↔ документация». Если создали действие в домене, но не создали ручку
-// (или не описали её в openapi.yaml) — тест падает. Описание правила: dev-план, раздел 8.1.
-
-// каталоги internal/, которые не содержат действий пользователя
 var skipDirs = map[string]bool{
 	"api": true, "apperr": true, "config": true, "db": true, "mailer": true,
-	"sender/max": true, "sender/vk": true, "sender/telegram": true, // адаптеры платформ
+	"sender/max": true, "sender/vk": true, "sender/telegram": true,
 }
 
 type action struct{ key, file string }
 
-// domainActions находит (через AST) все экспортируемые методы экспортируемых типов в доменных пакетах.
 func domainActions(t *testing.T) []action {
 	t.Helper()
-	root := filepath.Join("..") // internal/
+	root := filepath.Join("..")
 	var out []action
 	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		if err != nil || !info.IsDir() {
@@ -110,9 +105,9 @@ func routerRoutes(t *testing.T, r http.Handler) map[string]bool {
 	t.Helper()
 	got := map[string]bool{}
 	err := chi.Walk(r.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		route = strings.TrimSuffix(route, "/") // chi добавляет завершающий слэш в группах
+		route = strings.TrimSuffix(route, "/")
 		if route == "" || strings.HasSuffix(route, "/*") {
-			return nil // статика Swagger UI
+			return nil
 		}
 		got[method+" "+route] = true
 		return nil
@@ -150,7 +145,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	return k
 }
 
-// 1. Каждое действие домена имеет ручку в API (реестр) либо явно помечено как внутреннее.
 func TestEveryDomainActionHasAPIRoute(t *testing.T) {
 	for _, a := range domainActions(t) {
 		if _, ok := Registry[a.key]; ok {
@@ -162,7 +156,7 @@ func TestEveryDomainActionHasAPIRoute(t *testing.T) {
 		t.Errorf("действие %s (%s) не имеет ручки в API: добавьте ручку, опишите её в openapi.yaml и внесите в Registry "+
 			"(либо, если это не действие пользователя, — в InternalOnly с причиной)", a.key, a.file)
 	}
-	// и обратно: записи реестра не должны ссылаться на несуществующие действия
+
 	have := map[string]bool{}
 	for _, a := range domainActions(t) {
 		have[a.key] = true
@@ -179,7 +173,6 @@ func TestEveryDomainActionHasAPIRoute(t *testing.T) {
 	}
 }
 
-// 2. Каждое действие из реестра реально смонтировано в роутере.
 func TestRegistryRoutesExistInRouter(t *testing.T) {
 	routes := routerRoutes(t, testRouter())
 	for key, rt := range Registry {
@@ -189,7 +182,6 @@ func TestRegistryRoutesExistInRouter(t *testing.T) {
 	}
 }
 
-// 3 и 4. Роутер и openapi.yaml описывают один и тот же набор операций.
 func TestRouterAndSpecAreInSync(t *testing.T) {
 	_, ops := loadSpec(t)
 	routes := routerRoutes(t, testRouter())
@@ -205,7 +197,6 @@ func TestRouterAndSpecAreInSync(t *testing.T) {
 	}
 }
 
-// 5. Каждая операция в спеке описана достаточно полно.
 func TestSpecOperationsAreDocumented(t *testing.T) {
 	_, ops := loadSpec(t)
 	for _, name := range sortedKeys(ops) {
@@ -230,7 +221,7 @@ func TestSpecOperationsAreDocumented(t *testing.T) {
 			t.Errorf("%s: не описан успешный ответ 2xx", name)
 		}
 		path := name[strings.Index(name, " ")+1:]
-		if !strings.HasPrefix(path, "/webhooks/") {
+		if !strings.HasPrefix(path, "/webhooks/") && !strings.HasPrefix(path, "/internal/") {
 			continue
 		}
 		tagged := false
@@ -238,12 +229,11 @@ func TestSpecOperationsAreDocumented(t *testing.T) {
 			tagged = tagged || tg == "internal"
 		}
 		if !tagged {
-			t.Errorf("%s: вебхук должен иметь тег internal", name)
+			t.Errorf("%s: вебхук и служебный маршрут должны иметь тег internal", name)
 		}
 	}
 }
 
-// 6. Защита: всё, что не помечено публичным, без авторизации отдаёт 401; публичное — нет.
 func TestAuthRequirementMatchesRouter(t *testing.T) {
 	_, ops := loadSpec(t)
 	r := testRouter()

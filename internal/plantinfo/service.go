@@ -18,10 +18,9 @@ const (
 	notConfig   = "Справочник Perenual не подключён (не задан PERENUAL_API_KEY) — автоматический подбор недоступен, добавьте события вручную."
 )
 
-// Service ищет растения в справочнике и подбирает уход. Внешние сбои превращаются в понятное пояснение, а не в ошибку.
 type Service struct {
-	DB     *sql.DB // кэш; может быть nil
-	Source Source  // nil, если ключ Perenual не задан
+	DB     *sql.DB
+	Source Source
 	Now    func() time.Time
 }
 
@@ -39,8 +38,6 @@ func failNotice(err error) string {
 	return "Perenual сейчас недоступен — повторите позже или добавьте события вручную."
 }
 
-// Search показывает, что есть в справочнике по запросу. Запрос — название растения (русское из словаря, латинское
-// и английское работают как есть). Пустой результат сопровождается пояснением.
 func (s *Service) Search(ctx context.Context, text string) (ReferenceSearch, error) {
 	out := ReferenceSearch{Configured: s.Source != nil, Results: []Candidate{}}
 	if s.Source == nil {
@@ -70,8 +67,6 @@ func (s *Service) Search(ctx context.Context, text string) (ReferenceSearch, err
 	return out, nil
 }
 
-// Suggest подбирает уход. speciesID>0 — взять данные конкретного вида (выбранного из результатов поиска),
-// иначе вид подбирается автоматически по названию растения с оценкой точности совпадения.
 func (s *Service) Suggest(ctx context.Context, plantName string, speciesID int, today time.Time, channels []string) (Suggestion, error) {
 	none := func(notice string) Suggestion {
 		return Suggestion{Source: "none", Configured: s.Source != nil, Coverage: []Coverage{}, Notice: notice, Events: []SuggestedEvent{}}
@@ -111,7 +106,7 @@ func (s *Service) Suggest(ctx context.Context, plantName string, speciesID int, 
 	}
 
 	if facts.CommonName == "" && facts.Scientific == "" {
-		facts.CommonName = fmt.Sprintf("Вид №%d", facts.SpeciesID) // подробности закрыты — имени нет
+		facts.CommonName = fmt.Sprintf("Вид №%d", facts.SpeciesID)
 	}
 	events, cov := build(facts, today, channels)
 	sug := Suggestion{
@@ -125,7 +120,6 @@ func (s *Service) Suggest(ctx context.Context, plantName string, speciesID int, 
 	return sug, nil
 }
 
-// matchQuality: exact — запрос выведен из названия целиком и совпал с названием вида; иначе approximate с пояснением.
 func matchQuality(plantName string, sr ReferenceSearch, c Candidate) (string, string) {
 	hay := strings.ToLower(c.CommonName + " " + c.Scientific + " " + strings.Join(c.OtherNames, " "))
 	if sr.QueryNote == "" && strings.Contains(hay, strings.ToLower(sr.Query)) {
@@ -164,7 +158,7 @@ func (s *Service) details(ctx context.Context, id int) (*Facts, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.cachePut(ctx, key, !fp.Restricted, fp) // «подробности недоступны» кэшируем как короткий негатив
+	s.cachePut(ctx, key, !fp.Restricted, fp)
 	return fp, nil
 }
 

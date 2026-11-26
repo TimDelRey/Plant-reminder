@@ -35,7 +35,6 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-// authenticate — общий middleware: пользователь определяется по Bearer-токену либо по cookie сессии.
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bearer, cookie := bearerToken(r), sessionToken(r)
@@ -57,7 +56,6 @@ func isSafe(m string) bool {
 	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
 
-// sameOrigin — CSRF-защита для cookie-запросов с изменением данных (Bearer в ней не нуждается).
 func (a *API) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)

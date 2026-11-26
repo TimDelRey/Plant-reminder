@@ -34,7 +34,6 @@ export class ApiError extends Error {
 
 type Result<T> = { data?: T; error?: unknown; response: Response };
 
-/** Разворачивает ответ openapi-fetch: возвращает data или бросает ApiError в едином формате. */
 export async function unwrap<T>(p: Promise<Result<T>>): Promise<T> {
   let res: Result<T>;
   try {

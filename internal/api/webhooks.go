@@ -20,7 +20,6 @@ func readBody(w http.ResponseWriter, r *http.Request) []byte {
 	return b
 }
 
-// POST /webhooks/telegram — секретный токен в заголовке; обрабатывает «/start <код>».
 func (a *API) webhookTelegram(w http.ResponseWriter, r *http.Request) error {
 	if !secretEqual(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"), a.d.Cfg.TelegramWebhookSecret) {
 		return apperr.Unauthorized()
@@ -45,7 +44,6 @@ func (a *API) webhookTelegram(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// POST /webhooks/vk — VK Callback API: handshake confirmation + проверка поля secret; обрабатывает message_new.
 func (a *API) webhookVK(w http.ResponseWriter, r *http.Request) error {
 	var u struct {
 		Type   string `json:"type"`
@@ -79,8 +77,6 @@ func (a *API) webhookVK(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// POST /webhooks/max — секрет в заголовке X-Max-Bot-Api-Secret; message_created и bot_started (payload = код).
-// Формат апдейтов MAX нужно сверить с актуальной документацией dev.max.ru перед продакшеном.
 func (a *API) webhookMAX(w http.ResponseWriter, r *http.Request) error {
 	if !secretEqual(r.Header.Get("X-Max-Bot-Api-Secret"), a.d.Cfg.MAXWebhookSecret) {
 		return apperr.Unauthorized()

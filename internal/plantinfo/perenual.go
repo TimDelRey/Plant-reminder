@@ -13,11 +13,9 @@ import (
 	"time"
 )
 
-// Client — клиент Perenual API (v2): поиск вида по названию + детали вида.
-// Бесплатный тариф: 100 запросов в сутки, данные по видам с id 1–3000; на lookup уходит до двух запросов.
 type Client struct {
 	Key     string
-	BaseURL string // по умолчанию https://perenual.com
+	BaseURL string
 	HTTP    *http.Client
 }
 
@@ -81,7 +79,7 @@ func (i *image) url() string {
 		return ""
 	}
 	for _, u := range []string{i.Medium, i.Small, i.Thumbnail, i.Regular} {
-		// на бесплатном тарифе вместо ссылки бывает текст-заглушка или картинка «upgrade_access»
+
 		if strings.HasPrefix(u, "http") && !strings.Contains(u, "upgrade_access") {
 			return u
 		}
@@ -105,7 +103,6 @@ type detailsResp struct {
 
 const maxCandidates = 12
 
-// Search ищет виды по названию. Пустой результат — вид не найден.
 func (c *Client) Search(ctx context.Context, query string) ([]Candidate, error) {
 	var sr searchResp
 	if err := c.get(ctx, "/api/v2/species-list", url.Values{"q": {query}}, &sr); err != nil {
@@ -127,14 +124,13 @@ func (c *Client) Search(ctx context.Context, query string) ([]Candidate, error) 
 			without = append(without, cd)
 		}
 	}
-	out := append(with, without...) // сначала те, по которым можно получить уход
+	out := append(with, without...)
 	if len(out) > maxCandidates {
 		out = out[:maxCandidates]
 	}
 	return out, nil
 }
 
-// Details возвращает данные ухода по виду. Если подробности недоступны (ограничение тарифа) — Facts.Restricted.
 func (c *Client) Details(ctx context.Context, id int) (*Facts, error) {
 	var dr detailsResp
 	if err := c.get(ctx, "/api/v2/species/details/"+strconv.Itoa(id), url.Values{}, &dr); err != nil {
@@ -155,7 +151,6 @@ func (c *Client) Details(ctx context.Context, id int) (*Facts, error) {
 	return f, nil
 }
 
-// restricted: на бесплатном тарифе закрытые поля приходят текстом-заглушкой про апгрейд тарифа.
 func restricted(s string) bool {
 	l := strings.ToLower(s)
 	return strings.Contains(l, "upgrade plans") || strings.Contains(l, "subscription-api-pricing")
@@ -199,7 +194,6 @@ func stringList(v any) []string {
 
 var rangeRe = regexp.MustCompile(`(\d+)\D+(\d+)|(\d+)`)
 
-// parseBenchmark разбирает watering_general_benchmark: value бывает 7, "7", "5-7" и даже "\"5-7\"", unit — days/day.
 func parseBenchmark(value, unit any) (minDays, maxDays int) {
 	u := strings.ToLower(cleanString(unit))
 	if u != "" && !strings.HasPrefix(u, "day") {

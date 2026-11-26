@@ -42,7 +42,7 @@ tags:
   - name: channels
     description: Каналы уведомлений (MAX, VK, Telegram)
   - name: internal
-    description: Вебхуки платформ — вызываются MAX/VK/Telegram, не пользователями
+    description: Вебхуки платформ и запуск воркеров по таймеру — вызываются MAX/VK/Telegram и планировщиком облака, не пользователями
   - name: docs
     description: Документация API
 
@@ -621,6 +621,36 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /internal/run-jobs:
+    post:
+      tags: [internal]
+      operationId: runJobs
+      summary: Разовый прогон планировщика и очереди отправки
+      description: |
+        Для serverless-деплоя (`BACKGROUND_WORKERS=false`): внешний таймер (раз в час) будит приложение, оно создаёт
+        задания по созревшим событиям и отправляет очередь. Защищено секретом `INTERNAL_SECRET`: заголовок
+        `X-Internal-Secret` либо `payload` таймер-триггера Yandex Cloud (тот же вызов принимается и на `POST /`).
+        Если секрет не настроен, эндпоинт отвечает 404.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Прогон выполнен
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, jobs]
+                properties:
+                  events: { type: integer, description: Обработано созревших событий }
+                  jobs: { type: integer, description: Обработано заданий отправки }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 

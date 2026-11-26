@@ -12,11 +12,6 @@ const QUALITY: Record<string, { label: string; cls: string }> = {
   chosen: { label: "выбрано вручную", cls: "ok" },
 };
 
-/**
- * Подбор ухода по справочнику Perenual. Ничего не сохраняется, пока пользователь не подтвердит выбранные события.
- * Явно показывает: что нашлось в справочнике, насколько точно совпало, по каким аспектам ухода есть данные,
- * и какие ещё виды можно взять (например, другие сливы), если нужного сорта нет.
- */
 export default function CareSuggest({ plantId, plantName, onCancel, onImported }: {
   plantId: number; plantName: string; onCancel: () => void; onImported: () => void | Promise<void>;
 }) {
@@ -53,7 +48,7 @@ export default function CareSuggest({ plantId, plantName, onCancel, onImported }
   async function save() {
     setBusy(true); setError(""); setFieldErrors({});
     try {
-      const events = chosen.map(({ ev: { source: _s, ...e } }) => e); // source — служебное поле
+      const events = chosen.map(({ ev: { source: _s, ...e } }) => e);
       await unwrap(api.POST("/api/plants/{id}/events/import", { params: { path: { id: plantId } }, body: { events } }));
       await onImported();
     } catch (e) {

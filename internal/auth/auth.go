@@ -1,4 +1,3 @@
-// Package auth — пользователи, пароли, сессии, API-токены, сброс пароля.
 package auth
 
 import (
@@ -104,7 +103,6 @@ func (s *Service) newSession(ctx context.Context, userID int64) (string, error) 
 	return tok, err
 }
 
-// Register создаёт пользователя и открывает сессию.
 func (s *Service) Register(ctx context.Context, email, password string, cityID int64) (User, string, error) {
 	fields := map[string]string{}
 	em, err := normalizeEmail(email)
@@ -144,10 +142,8 @@ func (s *Service) Register(ctx context.Context, email, password string, cityID i
 	return u, tok, err
 }
 
-// dummyHash выравнивает время ответа, когда пользователя не существует.
 var dummyHash, _ = HashPassword("dummy-password-for-timing")
 
-// Login проверяет пароль и открывает сессию.
 func (s *Service) Login(ctx context.Context, email, password string) (User, string, error) {
 	em, err := normalizeEmail(email)
 	if err != nil || password == "" {
@@ -175,7 +171,6 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, stri
 	return u, tok, err
 }
 
-// Logout удаляет сессию по значению cookie.
 func (s *Service) Logout(ctx context.Context, sessionToken string) error {
 	if sessionToken == "" {
 		return nil
@@ -184,7 +179,6 @@ func (s *Service) Logout(ctx context.Context, sessionToken string) error {
 	return err
 }
 
-// GetMe возвращает профиль пользователя.
 func (s *Service) GetMe(ctx context.Context, userID int64) (User, error) {
 	u, err := scanUser(s.DB.QueryRowContext(ctx, userSelect+` WHERE u.id = $1`, userID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -193,7 +187,6 @@ func (s *Service) GetMe(ctx context.Context, userID int64) (User, error) {
 	return u, err
 }
 
-// UpdateCity меняет город пользователя (а значит и часовой пояс уведомлений).
 func (s *Service) UpdateCity(ctx context.Context, userID, cityID int64) (User, error) {
 	if _, err := cities.ByID(ctx, s.DB, cityID); err != nil {
 		return User{}, err
@@ -204,7 +197,6 @@ func (s *Service) UpdateCity(ctx context.Context, userID, cityID int64) (User, e
 	return s.GetMe(ctx, userID)
 }
 
-// ChangePassword меняет пароль и завершает все сессии, кроме текущей.
 func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepSession string) error {
 	if m := validatePassword(next); m != "" {
 		return apperr.Validation(map[string]string{"new_password": m})
@@ -234,7 +226,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 	return tx.Commit()
 }
 
-// DeleteAccount безвозвратно удаляет пользователя и все его данные (152-ФЗ).
 func (s *Service) DeleteAccount(ctx context.Context, userID int64, password string) error {
 	var hash string
 	if err := s.DB.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash); err != nil {
@@ -247,7 +238,6 @@ func (s *Service) DeleteAccount(ctx context.Context, userID int64, password stri
 	return err
 }
 
-// RequestPasswordReset отправляет письмо со ссылкой сброса. Никогда не раскрывает, есть ли аккаунт.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
 	em, err := normalizeEmail(email)
 	if err != nil {
@@ -284,13 +274,12 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	body := "Вы запросили сброс пароля в сервисе «Уход за растениями».\n\nПерейдите по ссылке, чтобы задать новый пароль (действует 1 час):\n" + link +
 		"\n\nЕсли вы не запрашивали сброс — просто проигнорируйте это письмо."
 	if err := s.Mailer.Send(ctx, em, "Сброс пароля — Уход за растениями", body); err != nil {
-		// ответ пользователю не меняется (не раскрываем существование аккаунта), ошибку фиксируем в логе
+
 		slog.Error("отправка письма сброса пароля", "err", err)
 	}
 	return nil
 }
 
-// ConfirmPasswordReset устанавливает новый пароль по токену из письма и отзывает все сессии и API-токены.
 func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword string) error {
 	if m := validatePassword(newPassword); m != "" {
 		return apperr.Validation(map[string]string{"password": m})
@@ -329,7 +318,6 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword s
 	return tx.Commit()
 }
 
-// ListTokens возвращает активные API-токены пользователя (без значений).
 func (s *Service) ListTokens(ctx context.Context, userID int64) ([]APIToken, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id, name, created_at, last_used_at, expires_at FROM api_tokens
 		WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC, id DESC`, userID)
@@ -348,7 +336,6 @@ func (s *Service) ListTokens(ctx context.Context, userID int64) ([]APIToken, err
 	return out, rows.Err()
 }
 
-// CreateToken создаёт API-токен; значение возвращается только здесь.
 func (s *Service) CreateToken(ctx context.Context, userID int64, name string, expiresInDays *int) (CreatedAPIToken, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len([]rune(name)) > 100 {
@@ -375,7 +362,6 @@ func (s *Service) CreateToken(ctx context.Context, userID int64, name string, ex
 	return t, err
 }
 
-// RevokeToken отзывает токен пользователя.
 func (s *Service) RevokeToken(ctx context.Context, userID, id int64) error {
 	res, err := s.DB.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`, id, userID)
 	if err != nil {
@@ -387,7 +373,6 @@ func (s *Service) RevokeToken(ctx context.Context, userID, id int64) error {
 	return nil
 }
 
-// Authenticate определяет пользователя по Bearer-токену или cookie сессии. viaCookie — для CSRF-проверки.
 func (s *Service) Authenticate(ctx context.Context, bearer, sessionCookie string) (userID int64, viaCookie bool, err error) {
 	if bearer != "" {
 		err = s.DB.QueryRowContext(ctx, `UPDATE api_tokens SET last_used_at = now()

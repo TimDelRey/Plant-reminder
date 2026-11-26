@@ -1,7 +1,7 @@
-// Package api — HTTP-роутинг, DTO и склейка доменов для фронтенда. Спецификация: openapi.yaml.
 package api
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"net/http"
@@ -32,13 +32,15 @@ type Deps struct {
 	Plants  *plants.Service
 	Cities  *cities.Service
 	Linking *sender.Linking
-	Static  fs.FS // собранный React (корень с index.html); может быть nil
+	Static  fs.FS
+
+	RunJobs func(ctx context.Context) (JobsResult, error)
 }
 
 type API struct {
 	d          Deps
-	authLimit  *limiter // вход/регистрация/сброс — по IP
-	resetLimit *limiter // запрос сброса — по email
+	authLimit  *limiter
+	resetLimit *limiter
 }
 
 const docsHTML = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>API — Уход за растениями</title>
@@ -53,7 +55,6 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer, securityHeaders, accessLog)
 
-	// документация — открыта
 	r.Get("/api/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 		_, _ = w.Write(OpenAPISpec)
@@ -65,7 +66,6 @@ func NewRouter(d Deps) http.Handler {
 	sub, _ := fs.Sub(swaggerFS, "swaggerui")
 	r.Handle("/api/docs/*", http.StripPrefix("/api/docs/", http.FileServer(http.FS(sub))))
 
-	// публичные
 	r.Post("/api/auth/register", h(a.register))
 	r.Post("/api/auth/login", h(a.login))
 	r.Post("/api/auth/logout", h(a.logout))
@@ -73,12 +73,13 @@ func NewRouter(d Deps) http.Handler {
 	r.Post("/api/auth/password-reset/confirm", h(a.confirmPasswordReset))
 	r.Get("/api/cities", h(a.searchCities))
 
-	// вебхуки платформ — своя проверка подписи/секрета
+	r.Post("/internal/run-jobs", h(a.runJobs))
+	r.Post("/", h(a.runJobs))
+
 	r.Post("/webhooks/telegram", h(a.webhookTelegram))
 	r.Post("/webhooks/vk", h(a.webhookVK))
 	r.Post("/webhooks/max", h(a.webhookMAX))
 
-	// под авторизацией (cookie-сессия или Bearer-токен)
 	r.Group(func(p chi.Router) {
 		p.Use(a.authenticate)
 		p.Get("/api/me", h(a.getMe))
@@ -119,6 +120,7 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	spa := a.spaHandler()
+	r.Get("/", spa.ServeHTTP)
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		if strings.HasPrefix(req.URL.Path, "/api/") || strings.HasPrefix(req.URL.Path, "/webhooks/") {
 			writeErr(w, req, apperr.NotFound())
@@ -132,7 +134,6 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
-// spaHandler раздаёт собранный React; неизвестные пути отдают index.html (клиентский роутинг).
 func (a *API) spaHandler() http.Handler {
 	if a.d.Static == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

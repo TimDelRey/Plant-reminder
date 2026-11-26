@@ -1,4 +1,3 @@
-// Package config читает настройки из переменных окружения (и из .env в dev).
 package config
 
 import (
@@ -34,11 +33,14 @@ type Config struct {
 	PerenualKey, PerenualBaseURL string
 
 	DevFakeSenders bool
+
+	BackgroundWorkers bool
+	InternalSecret    string
+	DBMaxConns        int
 }
 
 func (c *Config) IsProd() bool { return c.Env == "prod" }
 
-// Load читает .env (если есть; переменные окружения имеют приоритет) и валидирует конфигурацию.
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 	p := &envParser{}
@@ -72,6 +74,12 @@ func Load() (*Config, error) {
 		PerenualKey:           os.Getenv("PERENUAL_API_KEY"),
 		PerenualBaseURL:       os.Getenv("PERENUAL_BASE_URL"),
 		DevFakeSenders:        p.bool("DEV_FAKE_SENDERS", false),
+		BackgroundWorkers:     p.bool("BACKGROUND_WORKERS", true),
+		InternalSecret:        os.Getenv("INTERNAL_SECRET"),
+		DBMaxConns:            p.int("DB_MAX_CONNS", 20),
+	}
+	if port := os.Getenv("PORT"); port != "" && os.Getenv("HTTP_ADDR") == "" {
+		c.HTTPAddr = ":" + port
 	}
 	if err := errors.Join(p.errs...); err != nil {
 		return nil, fmt.Errorf("конфигурация: %w", err)
@@ -85,8 +93,14 @@ func Load() (*Config, error) {
 	if c.OutboxMaxAttempts < 1 || c.SchedulerInterval <= 0 || c.OutboxInterval <= 0 {
 		return nil, fmt.Errorf("OUTBOX_MAX_ATTEMPTS, SCHEDULER_INTERVAL и OUTBOX_INTERVAL должны быть положительными")
 	}
+	if c.DBMaxConns < 1 {
+		return nil, fmt.Errorf("DB_MAX_CONNS должен быть положительным")
+	}
+	if !c.BackgroundWorkers && len(c.InternalSecret) < 16 {
+		return nil, fmt.Errorf("при BACKGROUND_WORKERS=false нужен INTERNAL_SECRET (не короче 16 символов): им защищён POST /internal/run-jobs")
+	}
 	if c.IsProd() {
-		c.DevFakeSenders = false // заглушки только для dev
+		c.DevFakeSenders = false
 		if !c.CookieSecure {
 			return nil, fmt.Errorf("в APP_ENV=prod нужен COOKIE_SECURE=true")
 		}
@@ -101,7 +115,6 @@ func get(k, def string) string {
 	return def
 }
 
-// envParser накапливает ошибки разбора: опечатка в переменной окружения не должна молча превращаться в дефолт.
 type envParser struct{ errs []error }
 
 func (p *envParser) parse(k string, parse func(string) error) {

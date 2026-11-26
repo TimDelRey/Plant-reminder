@@ -43,7 +43,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	d, err := db.Open(ctx, cfg.DatabaseURL)
+	d, err := db.Open(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,6 @@ func run() error {
 		return err
 	}
 
-	// ---- sender: адаптеры каналов ----
 	dispatcher := sender.NewDispatcher()
 	setup := map[sender.Channel]sender.Setup{}
 	register := func(ch sender.Channel, token, username string, build func() (sender.Sender, error)) error {
@@ -98,6 +97,9 @@ func run() error {
 		slog.Warn("PERENUAL_API_KEY не задан — справочник растений недоступен, события добавляются вручную")
 	}
 
+	sched := &scheduler.Scheduler{DB: d, NotifyHour: cfg.NotifyHour, Interval: cfg.SchedulerInterval}
+	outbox := &sender.OutboxWorker{DB: d, Dispatcher: dispatcher, Interval: cfg.OutboxInterval, MaxAttempts: cfg.OutboxMaxAttempts}
+
 	authSvc := &auth.Service{DB: d, Mailer: mail, BaseURL: cfg.BaseURL}
 	handler := api.NewRouter(api.Deps{
 		Cfg:     cfg,
@@ -106,17 +108,26 @@ func run() error {
 		Cities:  &cities.Service{DB: d},
 		Linking: &sender.Linking{DB: d, Setup: setup, Dispatcher: dispatcher},
 		Static:  staticFS(),
+		RunJobs: func(ctx context.Context) (api.JobsResult, error) {
+			events, err := sched.Drain(ctx)
+			if err != nil {
+				return api.JobsResult{Events: events}, err
+			}
+			jobs, err := outbox.Drain(ctx)
+			slog.Info("прогон воркеров по таймеру", "events", events, "jobs", jobs)
+			return api.JobsResult{Events: events, Jobs: jobs}, err
+		},
 	})
 
-	// фоновые воркеры; при остановке ждём их до закрытия БД
 	var workers sync.WaitGroup
 	defer workers.Wait()
-	for _, run := range []func(context.Context){
-		(&scheduler.Scheduler{DB: d, NotifyHour: cfg.NotifyHour, Interval: cfg.SchedulerInterval}).Run,
-		(&sender.OutboxWorker{DB: d, Dispatcher: dispatcher, Interval: cfg.OutboxInterval, MaxAttempts: cfg.OutboxMaxAttempts}).Run,
-	} {
-		workers.Add(1)
-		go func() { defer workers.Done(); run(ctx) }()
+	if cfg.BackgroundWorkers {
+		for _, run := range []func(context.Context){sched.Run, outbox.Run} {
+			workers.Add(1)
+			go func() { defer workers.Done(); run(ctx) }()
+		}
+	} else {
+		slog.Info("фоновые воркеры выключены: ожидается внешний таймер → POST /internal/run-jobs")
 	}
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second}

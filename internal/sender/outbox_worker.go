@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// OutboxWorker разбирает notification_jobs. Задания бронируются через FOR UPDATE SKIP LOCKED + lease,
-// поэтому несколько инстансов не шлют одно сообщение дважды, а блокировки не держатся на время сетевых вызовов.
 type OutboxWorker struct {
 	DB          *sql.DB
 	Dispatcher  *Dispatcher
@@ -57,14 +55,10 @@ type job struct {
 const (
 	batchSize   = 20
 	sendTimeout = 15 * time.Second
-	// lease — на сколько задание «бронируется» воркером на время отправки. Если процесс упал посреди отправки,
-	// задание снова станет доступным по истечении lease (доставка at-least-once). Должен перекрывать худший
-	// случай обработки пачки: batchSize * sendTimeout.
+
 	lease = batchSize*sendTimeout + time.Minute
 )
 
-// claim бронирует пачку созревших заданий коротким запросом (без долгой транзакции): блокировки строк
-// живут только на время UPDATE, а сами сетевые отправки идут вне транзакции.
 func (w *OutboxWorker) claim(ctx context.Context) ([]job, error) {
 	now := w.now()
 	rows, err := w.DB.QueryContext(ctx, `
@@ -93,7 +87,6 @@ func (w *OutboxWorker) claim(ctx context.Context) ([]job, error) {
 	return jobs, rows.Err()
 }
 
-// ProcessOnce обрабатывает созревшие задания и возвращает их количество.
 func (w *OutboxWorker) ProcessOnce(ctx context.Context) (int, error) {
 	jobs, err := w.claim(ctx)
 	if err != nil {
@@ -105,6 +98,17 @@ func (w *OutboxWorker) ProcessOnce(ctx context.Context) (int, error) {
 		}
 	}
 	return len(jobs), nil
+}
+
+func (w *OutboxWorker) Drain(ctx context.Context) (total int, err error) {
+	for ctx.Err() == nil {
+		n, err := w.ProcessOnce(ctx)
+		total += n
+		if err != nil || n == 0 {
+			return total, err
+		}
+	}
+	return total, ctx.Err()
 }
 
 func (w *OutboxWorker) process(ctx context.Context, j job) error {

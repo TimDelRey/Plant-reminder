@@ -6,8 +6,6 @@ import (
 	"log/slog"
 )
 
-// DevSender — заглушка для разработки: «отправляет» сообщение в лог и в таблицу dev_outbox.
-// Подключается только при DEV_FAKE_SENDERS=true в dev-окружении для каналов без токена бота.
 type DevSender struct {
 	DB      *sql.DB
 	Channel Channel

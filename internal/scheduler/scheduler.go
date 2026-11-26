@@ -1,5 +1,3 @@
-// Package scheduler находит «созревшие» события ухода и кладёт generic-задачи в notification_jobs.
-// Он никогда не вызывает sender напрямую — только пишет в очередь.
 package scheduler
 
 import (
@@ -43,6 +41,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
+func (s *Scheduler) Drain(ctx context.Context) (total int, err error) {
+	for ctx.Err() == nil {
+		n, err := s.Tick(ctx)
+		total += n
+		if err != nil || n == 0 {
+			return total, err
+		}
+	}
+	return total, ctx.Err()
+}
+
 type dueEvent struct {
 	id          int64
 	title, desc string
@@ -55,8 +64,6 @@ type dueEvent struct {
 	tz          string
 }
 
-// Tick создаёт задания для всех событий, у которых next_due_at <= «сегодня» в поясе пользователя,
-// и сдвигает next_due_at (rrule). Возвращает число обработанных событий.
 func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	now := s.now()
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -96,7 +103,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		if err != nil {
 			loc = time.UTC
 		}
-		// утреннее время в день события по местному времени пользователя
+
 		slot := time.Date(e.due.Year(), e.due.Month(), e.due.Day(), s.NotifyHour, 0, 0, 0, loc).UTC()
 		scheduled := slot
 		if slot.Before(now) {
@@ -111,7 +118,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		if e.channels != "" {
 			for _, ch := range strings.Split(e.channels, ",") {
 				status, lastErr := "pending", sql.NullString{}
-				if !connected[ch] { // без фолбеков: канал не подключён — задание сразу failed
+				if !connected[ch] {
 					status, lastErr = "failed", sql.NullString{String: "канал не подключён", Valid: true}
 				}
 				if _, err := tx.ExecContext(ctx, `INSERT INTO notification_jobs
@@ -143,7 +150,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 				return 0, err
 			}
 		} else {
-			// manual: уведомление один раз; повторно — только после смены даты пользователем
+
 			if _, err := tx.ExecContext(ctx, `UPDATE care_events SET last_notified_for = $2 WHERE id = $1`, e.id, e.due); err != nil {
 				return 0, err
 			}

@@ -1,5 +1,4 @@
 -- +goose Up
--- Домен «уведомления» (sender): подключённые каналы, outbox-очередь/история отправок, dev-заглушка.
 CREATE TABLE user_channels (
     id                   bigserial PRIMARY KEY,
     user_id              bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -13,13 +12,12 @@ CREATE TABLE user_channels (
 );
 CREATE UNIQUE INDEX user_channels_code_uq ON user_channels (channel, link_code) WHERE link_code IS NOT NULL;
 
--- outbox: и очередь отправки, и история отправок
 CREATE TABLE notification_jobs (
     id            bigserial PRIMARY KEY,
     care_event_id bigint NOT NULL REFERENCES care_events(id) ON DELETE CASCADE,
     user_id       bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     channel       text NOT NULL CHECK (channel IN ('max','vk','telegram')),
-    title         text NOT NULL,   -- снимок сообщения, чтобы sender не зависел от доменной модели растений
+    title         text NOT NULL,
     body          text NOT NULL,
     scheduled_at  timestamptz NOT NULL,
     status        text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed')),
@@ -32,7 +30,6 @@ CREATE TABLE notification_jobs (
 CREATE INDEX notification_jobs_pending_idx ON notification_jobs (scheduled_at) WHERE status = 'pending';
 CREATE INDEX notification_jobs_user_idx ON notification_jobs (user_id);
 
--- Только dev: «отправленные» заглушкой сообщения (DEV_FAKE_SENDERS)
 CREATE TABLE dev_outbox (
     id          bigserial PRIMARY KEY,
     user_id     bigint,

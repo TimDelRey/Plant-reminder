@@ -1,4 +1,3 @@
-// Package apperr — единый тип ошибок приложения, который HTTP-слой превращает в {"error": {...}}.
 package apperr
 
 import "net/http"

@@ -1,4 +1,3 @@
-// Package vk — адаптер отправки сообщений от имени сообщества VK (SevereCloud/vksdk).
 package vk
 
 import (

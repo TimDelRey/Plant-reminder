@@ -19,7 +19,7 @@ var sunlightRU = map[string]string{
 var wateringRU = map[string]string{"Frequent": "частый", "Average": "умеренный", "Minimum": "редкий"}
 
 func sunlightLabels(in []string) []string {
-	out := []string{} // не nil: в JSON должен быть [], а не null
+	out := []string{}
 	seen := map[string]bool{}
 	for _, s := range in {
 		l := strings.ToLower(strings.TrimSpace(s))
@@ -50,7 +50,6 @@ func plural(n int, one, few, many string) string {
 	return many
 }
 
-// intervalRule — правило RFC 5545 для «раз в n дней».
 func intervalRule(n int) (rule, note string) {
 	switch {
 	case n == 1:
@@ -66,7 +65,6 @@ func intervalRule(n int) (rule, note string) {
 
 func date(t time.Time) string { return t.Format(dateLayout) }
 
-// build строит предложение ухода ТОЛЬКО из данных справочника и честно показывает, что найдено, а что нет.
 func build(f *Facts, today time.Time, channels []string) ([]SuggestedEvent, []Coverage) {
 	if channels == nil {
 		channels = []string{}
@@ -76,7 +74,6 @@ func build(f *Facts, today time.Time, channels []string) ([]SuggestedEvent, []Co
 	const noData = "нет данных в справочнике"
 	restricted := "подробности по этому виду недоступны на текущем тарифе Perenual"
 
-	// полив
 	days := wateringDays(f)
 	switch {
 	case days > 0:
@@ -104,7 +101,6 @@ func build(f *Facts, today time.Time, channels []string) ([]SuggestedEvent, []Co
 		cov = append(cov, Coverage{Field: "watering", Label: "Полив", Available: false, Detail: noData})
 	}
 
-	// обрезка
 	switch {
 	case len(f.PruningMonths) > 0:
 		first := f.PruningMonths[0]
@@ -128,13 +124,11 @@ func build(f *Facts, today time.Time, channels []string) ([]SuggestedEvent, []Co
 		cov = append(cov, Coverage{Field: "pruning", Label: "Обрезка", Available: false, Detail: noData})
 	}
 
-	// подкормка: в Perenual таких данных нет вообще
 	cov = append(cov, Coverage{Field: "fertilizing", Label: "Подкормка", Available: false,
 		Detail: "в Perenual нет данных о подкормке — добавьте событие вручную"})
 	return events, cov
 }
 
-// wateringDays — интервал полива в днях по данным Perenual (0, если данных нет).
 func wateringDays(f *Facts) int {
 	if f.WateringMinDays > 0 {
 		n := (f.WateringMinDays + f.WateringMaxDays + 1) / 2

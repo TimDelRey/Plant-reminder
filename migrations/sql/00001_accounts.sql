@@ -1,10 +1,9 @@
 -- +goose Up
--- Домен «аккаунты»: справочник городов (источник часового пояса), пользователи, сессии, токены.
 CREATE TABLE cities (
     id         bigserial PRIMARY KEY,
     name       text NOT NULL,
     region     text NOT NULL DEFAULT '',
-    timezone   text NOT NULL,          -- IANA, например Europe/Moscow
+    timezone   text NOT NULL,
     population integer NOT NULL DEFAULT 0,
     lat        double precision,
     lon        double precision

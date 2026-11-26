@@ -52,11 +52,11 @@ function ChannelCard({ meta, st, onChange }: { meta: (typeof CHANNELS)[number]; 
         const s = await unwrap(api.GET("/api/channels/{channel}/status", { params: { path: { channel } } }));
         onChange(s);
         if (s.status !== "pending") stopPolling();
-      } catch { /* повторим на следующем тике */ }
+      } catch {}
     }, POLL_MS);
   }, [channel, onChange, stopPolling]);
 
-  useEffect(() => { if (st.status === "pending" && !pollRef.current) startPolling(); }, []); // eslint-disable-line
+  useEffect(() => { if (st.status === "pending" && !pollRef.current) startPolling(); }, []);
   useEffect(() => stopPolling, [stopPolling]);
 
   async function connect() {

@@ -1,6 +1,3 @@
-// Package testutil — помощники для интеграционных тестов с PostgreSQL.
-// Тесты пропускаются, если не задан TEST_DATABASE_URL (например,
-// postgres://plantcare:plantcare@localhost:5433/plantcare_test?sslmode=disable).
 package testutil
 
 import (
@@ -12,14 +9,13 @@ import (
 	"plantcare/internal/db"
 )
 
-// DB возвращает чистую (все пользовательские данные удалены) базу с применёнными миграциями и справочником городов.
 func DB(t *testing.T) *sql.DB {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL не задан — интеграционный тест пропущен")
 	}
-	d, err := db.Open(context.Background(), url)
+	d, err := db.Open(context.Background(), url, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +32,6 @@ func DB(t *testing.T) *sql.DB {
 	return d
 }
 
-// CityID возвращает id города по названию.
 func CityID(t *testing.T, d *sql.DB, name string) int64 {
 	t.Helper()
 	var id int64

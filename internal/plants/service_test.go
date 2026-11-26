@@ -80,7 +80,7 @@ func TestCompleteEventRecalculatesDueDate(t *testing.T) {
 	p, _ := s.CreatePlant(ctx, uid, PlantInput{Name: "p"})
 
 	weekly, _ := s.CreateEvent(ctx, uid, p.ID, EventInput{Title: "w", Category: "Полив", RecurrenceKind: "rrule", RecurrenceRule: ptr("FREQ=WEEKLY"), NextDueAt: "2026-11-16"})
-	if ev, err := s.CompleteEvent(ctx, uid, weekly.ID); err != nil || ev.NextDueAt != "2026-11-30" { // ближайшая по правилу строго после сегодня
+	if ev, err := s.CompleteEvent(ctx, uid, weekly.ID); err != nil || ev.NextDueAt != "2026-11-30" {
 		t.Errorf("rrule: %+v %v", ev, err)
 	}
 	manual, _ := s.CreateEvent(ctx, uid, p.ID, EventInput{Title: "m", Category: "Другое", RecurrenceKind: "manual", NextDueAt: "2026-11-23"})

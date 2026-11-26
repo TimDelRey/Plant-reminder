@@ -15,8 +15,6 @@ import (
 
 var today = time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
 
-// ---------- Perenual HTTP-клиент на моковом сервере ----------
-
 func fakePerenual(t *testing.T, calls *atomic.Int32, search, details string, status int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +71,7 @@ func TestClientDetailsParsesAndHandlesRestrictions(t *testing.T) {
 	if err != nil || f.Watering != "Average" || f.WateringMinDays != 5 || f.WateringMaxDays != 7 || len(f.PruningMonths) != 2 || f.Restricted {
 		t.Fatalf("%+v %v", f, err)
 	}
-	// закрытые поля тарифа приходят текстом-заглушкой
+
 	restr := `{"watering":"Upgrade Plans To Premium/Supreme - https://perenual.com/subscription-api-pricing. I'm sorry",
 	 "watering_general_benchmark":{"value":"Upgrade Plans To Premium","unit":"days"},"sunlight":"Upgrade Plans","pruning_month":"Upgrade Plans"}`
 	srv = fakePerenual(t, &calls, "", restr, 0)
@@ -82,14 +80,14 @@ func TestClientDetailsParsesAndHandlesRestrictions(t *testing.T) {
 	if f.Watering != "" || f.WateringMinDays != 0 || len(f.PruningMonths) != 0 || len(f.Sunlight) != 0 {
 		t.Errorf("заглушки должны игнорироваться: %+v", f)
 	}
-	// HTTP-ошибка деталей — «недоступно», но не сбой
+
 	srv = fakePerenual(t, &calls, "", "", 403)
 	f, err = NewClient("k", srv.URL).Details(context.Background(), 5000)
 	srv.Close()
 	if err != nil || !f.Restricted {
 		t.Errorf("403 → Restricted: %+v %v", f, err)
 	}
-	// лимит — ошибка
+
 	srv = fakePerenual(t, &calls, "", "", 429)
 	_, err = NewClient("k", srv.URL).Details(context.Background(), 1)
 	srv.Close()
@@ -97,8 +95,6 @@ func TestClientDetailsParsesAndHandlesRestrictions(t *testing.T) {
 		t.Errorf("429 → ErrRateLimited, got %v", err)
 	}
 }
-
-// ---------- логика сервиса на подставном источнике ----------
 
 type fakeSource struct {
 	search       map[string][]Candidate
@@ -131,7 +127,7 @@ func plumSource() *fakeSource {
 		},
 		details: map[int]*Facts{
 			42: {SpeciesID: 42, CommonName: "Plum", Scientific: "Prunus domestica", Watering: "Average", WateringMinDays: 7, WateringMaxDays: 10, PruningMonths: []int{2, 3}, Sunlight: []string{"full sun"}},
-			43: {SpeciesID: 43, CommonName: "Mirabelle Plum", Scientific: "Prunus syriaca"}, // данных ухода нет
+			43: {SpeciesID: 43, CommonName: "Mirabelle Plum", Scientific: "Prunus syriaca"},
 		},
 	}
 }
@@ -151,7 +147,7 @@ func TestSuggestExactMatchBuildsOnlyReferenceEvents(t *testing.T) {
 		}
 	}
 	w := sug.Events[0]
-	if *w.RecurrenceRule != "FREQ=DAILY;INTERVAL=9" || w.NextDueAt != "2026-12-02" { // 7–10 → 9
+	if *w.RecurrenceRule != "FREQ=DAILY;INTERVAL=9" || w.NextDueAt != "2026-12-02" {
 		t.Errorf("полив: %+v", w)
 	}
 	if p := sug.Events[1]; p.NextDueAt != "2027-02-15" || *p.RecurrenceRule != "FREQ=YEARLY" {
@@ -166,7 +162,6 @@ func TestSuggestExactMatchBuildsOnlyReferenceEvents(t *testing.T) {
 	}
 }
 
-// Сценарий «Слива Бербанк»: сорта в справочнике по запросу «plum» нет — совпадение приблизительное, и это сказано явно.
 func TestVarietyIsApproximateAndExplained(t *testing.T) {
 	s := &Service{Source: plumSource()}
 	sr, _ := s.Search(context.Background(), "Слива Бербанк")
@@ -177,7 +172,7 @@ func TestVarietyIsApproximateAndExplained(t *testing.T) {
 	if sug.Match == nil || sug.Match.Quality != "approximate" || !strings.Contains(sug.Match.QualityNote, "Точного совпадения") || !strings.Contains(sug.Match.QualityNote, "Plum") {
 		t.Fatalf("match: %+v", sug.Match)
 	}
-	// пользователь выбирает вид вручную (кнопка «взять уход от этого»)
+
 	sug, _ = s.Suggest(context.Background(), "Слива Бербанк", 43, today, nil)
 	if sug.Match.Quality != "chosen" || sug.Match.CommonName != "Mirabelle Plum" {
 		t.Errorf("chosen: %+v", sug.Match)
@@ -186,7 +181,7 @@ func TestVarietyIsApproximateAndExplained(t *testing.T) {
 
 func TestNoDataMeansNoEventsAndExplicitExplanation(t *testing.T) {
 	s := &Service{Source: plumSource()}
-	// вид найден, но данных ухода в справочнике нет
+
 	sug, _ := s.Suggest(context.Background(), "x", 43, today, nil)
 	if sug.Source != "perenual" || len(sug.Events) != 0 || sug.Notice == "" {
 		t.Fatalf("%+v", sug)
@@ -196,17 +191,17 @@ func TestNoDataMeansNoEventsAndExplicitExplanation(t *testing.T) {
 			t.Errorf("%+v не должно быть доступно", c)
 		}
 	}
-	// подробности по виду закрыты тарифом
+
 	sug, _ = s.Suggest(context.Background(), "x", 4000, today, nil)
 	if len(sug.Events) != 0 || !strings.Contains(sug.Coverage[0].Detail, "тарифе") {
 		t.Errorf("restricted: %+v", sug)
 	}
-	// ничего не найдено вообще
+
 	sug, _ = s.Suggest(context.Background(), "Zzzz", 0, today, nil)
 	if sug.Source != "none" || len(sug.Events) != 0 || sug.Match != nil || !strings.Contains(sug.Notice, "ничего") && !strings.Contains(sug.Notice, "нет ничего") {
 		t.Errorf("not found: %+v", sug)
 	}
-	// кириллица без перевода
+
 	sug, _ = s.Suggest(context.Background(), "Неведомая трава", 0, today, nil)
 	if sug.Source != "none" || !strings.Contains(sug.Notice, "перевести") {
 		t.Errorf("untranslatable: %+v", sug)
@@ -246,18 +241,18 @@ func TestCachingSavesQuota(t *testing.T) {
 	if src.searchCalls != 1 || src.detailsCalls != 1 {
 		t.Errorf("запросов во внешний источник: search=%d details=%d, ожидалось по 1", src.searchCalls, src.detailsCalls)
 	}
-	// ненайденное тоже кэшируется, но недолго
+
 	_, _ = s.Search(context.Background(), "zzz")
 	_, _ = s.Search(context.Background(), "zzz")
 	if src.searchCalls != 2 {
 		t.Errorf("негативный кэш: %d", src.searchCalls)
 	}
-	s.Now = func() time.Time { return today.AddDate(0, 0, 4) } // негатив живёт 3 дня
+	s.Now = func() time.Time { return today.AddDate(0, 0, 4) }
 	_, _ = s.Search(context.Background(), "zzz")
 	if src.searchCalls != 3 {
 		t.Errorf("после TTL негатива: %d", src.searchCalls)
 	}
-	// сбои не кэшируются
+
 	bad := plumSource()
 	bad.err = ErrUnavailable
 	_, _ = (&Service{DB: d, Source: bad}).Search(context.Background(), "rose")
@@ -318,10 +313,9 @@ func TestIntervalRule(t *testing.T) {
 	}
 }
 
-// Контракт API: массивы в ответе никогда не null (фронтенд обращается к .length).
 func TestSuggestionJSONHasNoNullArrays(t *testing.T) {
 	s := &Service{Source: plumSource()}
-	for _, id := range []int{43, 4000, 42} { // без данных, закрыт тарифом, с данными
+	for _, id := range []int{43, 4000, 42} {
 		sug, _ := s.Suggest(context.Background(), "x", id, today, nil)
 		b, _ := json.Marshal(sug)
 		js := string(b)

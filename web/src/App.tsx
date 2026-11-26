@@ -18,7 +18,7 @@ function Protected() {
   if (!user) return <Navigate to="/login" replace />;
 
   async function logout() {
-    try { await unwrap(api.POST("/api/auth/logout")); } catch { /* всё равно выходим */ }
+    try { await unwrap(api.POST("/api/auth/logout")); } catch {}
     setUser(null);
     navigate("/login");
   }

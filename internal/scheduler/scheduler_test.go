@@ -96,22 +96,20 @@ func tick(t *testing.T, f fixture, now string) int {
 	return n
 }
 
-// До 09:00 местного времени уведомление ставится на утро, а не уходит сразу.
 func TestBeforeMorningIsScheduledForNineLocal(t *testing.T) {
 	f := newFixture(t, "Москва")
 	f.connect(t, "telegram")
 	f.event(t, "manual", "", "2026-11-23", "telegram")
-	tick(t, f, "2026-11-23T05:00:00Z") // 08:00 MSK
+	tick(t, f, "2026-11-23T05:00:00Z")
 	j := f.jobs(t)
 	if len(j) != 1 || j[0].status != "pending" {
 		t.Fatalf("jobs: %+v", j)
 	}
-	if want := at("2026-11-23T06:00:00Z"); !j[0].scheduled.Equal(want) { // 09:00 MSK
+	if want := at("2026-11-23T06:00:00Z"); !j[0].scheduled.Equal(want) {
 		t.Errorf("scheduled_at = %v, want %v", j[0].scheduled, want)
 	}
 }
 
-// После утреннего времени задание создаётся «на сейчас».
 func TestAfterMorningIsScheduledNow(t *testing.T) {
 	f := newFixture(t, "Москва")
 	f.connect(t, "telegram")
@@ -123,9 +121,8 @@ func TestAfterMorningIsScheduledNow(t *testing.T) {
 	}
 }
 
-// Пояс пользователя берётся из его города: во Владивостоке (UTC+10) 24-е число уже наступило, в Москве — нет.
 func TestTimezoneOfUsersCity(t *testing.T) {
-	now := "2026-11-23T15:00:00Z" // 01:00 24 ноября во Владивостоке, 18:00 23 ноября в Москве
+	now := "2026-11-23T15:00:00Z"
 
 	f := newFixture(t, "Владивосток")
 	f.connect(t, "telegram")
@@ -133,7 +130,7 @@ func TestTimezoneOfUsersCity(t *testing.T) {
 	if n := tick(t, f, now); n != 1 {
 		t.Fatalf("Владивосток: обработано %d, ожидалось 1", n)
 	}
-	if j := f.jobs(t); len(j) != 1 || !j[0].scheduled.Equal(at("2026-11-23T23:00:00Z")) { // 09:00 VLAT 24-го
+	if j := f.jobs(t); len(j) != 1 || !j[0].scheduled.Equal(at("2026-11-23T23:00:00Z")) {
 		t.Errorf("Владивосток: %+v", j)
 	}
 
@@ -145,14 +142,13 @@ func TestTimezoneOfUsersCity(t *testing.T) {
 	}
 }
 
-// Ежедневное событие: сегодня одно уведомление, следующее создаётся на следующий день утром.
 func TestDailyEventNextNotificationTomorrowMorning(t *testing.T) {
 	f := newFixture(t, "Москва")
 	f.connect(t, "telegram")
 	id := f.event(t, "rrule", "FREQ=DAILY", "2026-11-23", "telegram")
 
 	tick(t, f, "2026-11-23T10:00:00Z")
-	tick(t, f, "2026-11-23T10:01:00Z") // повторный проход в тот же день — дубля нет
+	tick(t, f, "2026-11-23T10:01:00Z")
 	if n := len(f.jobs(t)); n != 1 {
 		t.Fatalf("после двух проходов за день заданий %d, ожидалось 1", n)
 	}
@@ -160,7 +156,7 @@ func TestDailyEventNextNotificationTomorrowMorning(t *testing.T) {
 		t.Fatalf("next_due_at = %s, ожидалось 2026-11-24", got)
 	}
 
-	tick(t, f, "2026-11-24T04:00:00Z") // 07:00 MSK завтра — слот ещё впереди
+	tick(t, f, "2026-11-24T04:00:00Z")
 	j := f.jobs(t)
 	if len(j) != 2 || !j[1].scheduled.Equal(at("2026-11-24T06:00:00Z")) {
 		t.Fatalf("jobs: %+v", j)
@@ -170,7 +166,6 @@ func TestDailyEventNextNotificationTomorrowMorning(t *testing.T) {
 	}
 }
 
-// Ручное событие уведомляет один раз и снова — только после смены даты пользователем.
 func TestManualEventNotifiesOnceUntilDateChanged(t *testing.T) {
 	f := newFixture(t, "Москва")
 	f.connect(t, "telegram")
@@ -195,10 +190,9 @@ func TestManualEventNotifiesOnceUntilDateChanged(t *testing.T) {
 	}
 }
 
-// Без фолбеков: уведомления только в выбранные каналы; неподключённый канал — failed, в другой не переотправляется.
 func TestNoFallbackBetweenChannels(t *testing.T) {
 	f := newFixture(t, "Москва")
-	f.connect(t, "vk", "max") // telegram не подключён
+	f.connect(t, "vk", "max")
 	f.event(t, "manual", "", "2026-11-23", "telegram,vk")
 	tick(t, f, "2026-11-23T10:00:00Z")
 	got := map[string]jobRow{}
@@ -216,7 +210,6 @@ func TestNoFallbackBetweenChannels(t *testing.T) {
 	}
 }
 
-// Неактивные и будущие события не обрабатываются.
 func TestInactiveAndFutureIgnored(t *testing.T) {
 	f := newFixture(t, "Москва")
 	f.connect(t, "telegram")

@@ -23,7 +23,6 @@ export function Field({ id, label, error, children }: { id: string; label: strin
   );
 }
 
-/** Ошибка формы: общее сообщение, если оно не относится к конкретным полям. */
 export function FormError({ error }: { error: unknown }) {
   if (!error) return null;
   const e = error as ApiError;

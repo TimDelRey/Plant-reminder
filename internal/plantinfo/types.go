@@ -1,6 +1,3 @@
-// Package plantinfo подбирает рекомендации по уходу для растения по внешнему справочнику Perenual:
-// поиск вариантов по названию, детали выбранного вида, кэш в БД. Никаких «дефолтных» событий:
-// если справочник не дал данных, об этом сказано явно (Coverage/Notice), а событий нет.
 package plantinfo
 
 import (
@@ -8,32 +5,29 @@ import (
 	"errors"
 )
 
-// Candidate — вид (или сорт) из справочника, найденный по запросу.
 type Candidate struct {
 	ID               int      `json:"id"`
 	CommonName       string   `json:"common_name"`
 	Scientific       string   `json:"scientific"`
 	OtherNames       []string `json:"other_names"`
 	ImageURL         string   `json:"image_url"`
-	DetailsAvailable bool     `json:"details_available"` // на бесплатном тарифе подробности есть только у видов с id 1–3000
+	DetailsAvailable bool     `json:"details_available"`
 }
 
-// Facts — нормализованные данные о виде растения.
 type Facts struct {
 	SpeciesID       int      `json:"species_id"`
 	CommonName      string   `json:"common_name"`
 	Scientific      string   `json:"scientific"`
 	ImageURL        string   `json:"image_url,omitempty"`
-	Watering        string   `json:"watering,omitempty"`          // Frequent | Average | Minimum | None
-	WateringMinDays int      `json:"watering_min_days,omitempty"` // из watering_general_benchmark
+	Watering        string   `json:"watering,omitempty"`
+	WateringMinDays int      `json:"watering_min_days,omitempty"`
 	WateringMaxDays int      `json:"watering_max_days,omitempty"`
 	Sunlight        []string `json:"sunlight,omitempty"`
-	PruningMonths   []int    `json:"pruning_months,omitempty"` // 1..12 (северное полушарие)
+	PruningMonths   []int    `json:"pruning_months,omitempty"`
 	CareLevel       string   `json:"care_level,omitempty"`
-	Restricted      bool     `json:"restricted,omitempty"` // подробности по виду недоступны (тариф)
+	Restricted      bool     `json:"restricted,omitempty"`
 }
 
-// Source — внешний справочник.
 type Source interface {
 	Search(ctx context.Context, query string) ([]Candidate, error)
 	Details(ctx context.Context, id int) (*Facts, error)
@@ -44,7 +38,6 @@ var (
 	ErrUnavailable = errors.New("Perenual недоступен")
 )
 
-// SuggestedEvent совместим по полям с EventInput API. События строятся только из данных справочника.
 type SuggestedEvent struct {
 	Title          string   `json:"title"`
 	Category       string   `json:"category"`
@@ -54,10 +47,9 @@ type SuggestedEvent struct {
 	RecurrenceNote string   `json:"recurrence_note"`
 	NextDueAt      string   `json:"next_due_at"`
 	Channels       []string `json:"channels"`
-	Source         string   `json:"source"` // всегда perenual
+	Source         string   `json:"source"`
 }
 
-// Match — какой вид справочника сопоставлен растению и насколько точно.
 type Match struct {
 	SpeciesID   int      `json:"species_id"`
 	CommonName  string   `json:"common_name"`
@@ -65,21 +57,19 @@ type Match struct {
 	ImageURL    string   `json:"image_url"`
 	Sunlight    []string `json:"sunlight"`
 	CareLevel   string   `json:"care_level"`
-	Quality     string   `json:"quality"` // exact | approximate | chosen
+	Quality     string   `json:"quality"`
 	QualityNote string   `json:"quality_note"`
 }
 
-// Coverage — что справочник дал по каждому аспекту ухода.
 type Coverage struct {
-	Field     string `json:"field"` // watering | pruning | fertilizing
+	Field     string `json:"field"`
 	Label     string `json:"label"`
 	Available bool   `json:"available"`
 	Detail    string `json:"detail"`
 }
 
-// Suggestion — результат подбора (ничего не сохраняет).
 type Suggestion struct {
-	Source      string           `json:"source"` // perenual | none
+	Source      string           `json:"source"`
 	Configured  bool             `json:"configured"`
 	Match       *Match           `json:"match"`
 	Coverage    []Coverage       `json:"coverage"`
@@ -88,10 +78,9 @@ type Suggestion struct {
 	Events      []SuggestedEvent `json:"events"`
 }
 
-// ReferenceSearch — что есть в справочнике по запросу.
 type ReferenceSearch struct {
 	Configured bool        `json:"configured"`
-	Query      string      `json:"query"` // что реально искали (после перевода)
+	Query      string      `json:"query"`
 	QueryNote  string      `json:"query_note"`
 	Results    []Candidate `json:"results"`
 	Notice     string      `json:"notice"`

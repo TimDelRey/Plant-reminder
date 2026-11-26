@@ -2,8 +2,6 @@ package plantinfo
 
 import "strings"
 
-// ruToEn — русские названия распространённых растений → поисковый запрос для Perenual (он понимает английские
-// и латинские названия). Всё, чего здесь нет, ищется как введено (латиница работает) и иначе уходит в общий набор.
 var ruToEn = map[string]string{
 	"слива": "plum", "груша": "pear", "яблоня": "apple tree", "вишня": "cherry", "черешня": "sweet cherry",
 	"абрикос": "apricot", "персик": "peach", "айва": "quince", "малина": "raspberry", "смородина": "currant",
@@ -25,14 +23,12 @@ var ruToEn = map[string]string{
 	"туя": "thuja", "ель": "spruce", "сосна": "pine", "берёза": "birch", "береза": "birch", "дуб": "oak", "клён": "maple",
 }
 
-// query — поисковый запрос к справочнику, полученный из названия растения.
 type query struct {
-	Q       string // что искать (английское/латинское)
-	Partial bool   // найдено только по первому слову названия (сорт/уточнение отброшены)
-	Word    string // слово, по которому искали при Partial
+	Q       string
+	Partial bool
+	Word    string
 }
 
-// queries возвращает поисковые запросы для названия растения (нормализованные), от более точного к менее.
 func queries(name string) []query {
 	n := strings.ToLower(strings.TrimSpace(name))
 	n = strings.Join(strings.Fields(strings.ReplaceAll(n, "ё", "е")), " ")
@@ -52,7 +48,7 @@ func queries(name string) []query {
 	if en, ok := lookup(n); ok {
 		return []query{{Q: en}}
 	}
-	// кириллица без полного перевода: пробуем первое слово («слива бербанк» → «plum», уточнение «бербанк» теряется)
+
 	if first := strings.Fields(n)[0]; first != n {
 		if en, ok := lookup(first); ok {
 			return []query{{Q: en, Partial: true, Word: first}}

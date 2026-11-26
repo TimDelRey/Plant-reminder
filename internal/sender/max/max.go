@@ -1,5 +1,3 @@
-// Package max — адаптер отправки через MAX Bot API (https://dev.max.ru/docs-api).
-// Используется прямой HTTP-вызов POST /messages?user_id=..., без внешнего SDK.
 package max
 
 import (

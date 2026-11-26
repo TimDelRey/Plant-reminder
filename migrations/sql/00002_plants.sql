@@ -1,5 +1,4 @@
 -- +goose Up
--- Домен «растения»: растения, события ухода и кэш внешнего справочника (Perenual).
 CREATE TABLE plants (
     id         bigserial PRIMARY KEY,
     user_id    bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -27,9 +26,8 @@ CREATE TABLE care_events (
 CREATE INDEX care_events_plant_idx ON care_events (plant_id);
 CREATE INDEX care_events_due_idx ON care_events (next_due_at) WHERE active;
 
--- Кэш ответов Perenual: экономим лимит бесплатного тарифа (100 запросов/сутки).
 CREATE TABLE plant_lookup_cache (
-    query      text PRIMARY KEY,          -- ключ кэша: search:<запрос в нижнем регистре> или species:<id>
+    query      text PRIMARY KEY,
     found      boolean NOT NULL,
     facts      jsonb,
     fetched_at timestamptz NOT NULL DEFAULT now()

@@ -288,7 +288,6 @@ function EventForm({ plantId, event, onClose, onSaved }: { plantId: number; even
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
-  // для нового события по умолчанию отмечены подключённые каналы
   useEffect(() => {
     if (editing) return;
     unwrap(api.GET("/api/channels")).then((list: ChannelStatus[]) =>

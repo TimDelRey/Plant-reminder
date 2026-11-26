@@ -181,7 +181,6 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{
 .combo-list .sub{ color:var(--ink-soft); font-size:12px; }
 .combo-selected{ font-size:12px; color:var(--leaf-deep); margin-top:4px; }
 
-/* подбор ухода: предпросмотр перед сохранением */
 .suggest{ margin-top:6px; }
 .suggest-match{ display:flex; gap:12px; align-items:center; padding:10px 12px; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; }
 .suggest-list{ display:grid; gap:10px; margin-top:10px; }

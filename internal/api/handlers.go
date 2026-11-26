@@ -31,8 +31,6 @@ func (a *API) tooMany(r *http.Request, l *limiter, key string) error {
 	return nil
 }
 
-// ---------- auth ----------
-
 func (a *API) register(w http.ResponseWriter, r *http.Request) error {
 	if err := a.tooMany(r, a.authLimit, clientIP(r, a.d.Cfg.IsProd())); err != nil {
 		return err
@@ -109,8 +107,6 @@ func (a *API) confirmPasswordReset(w http.ResponseWriter, r *http.Request) error
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
-
-// ---------- account ----------
 
 func (a *API) getMe(w http.ResponseWriter, r *http.Request) error {
 	u, err := a.d.Auth.GetMe(r.Context(), userID(r))
@@ -213,8 +209,6 @@ func (a *API) searchCities(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// ---------- plants & events ----------
-
 func (a *API) listPlants(w http.ResponseWriter, r *http.Request) error {
 	p, err := a.d.Plants.ListPlants(r.Context(), userID(r))
 	if err != nil {
@@ -261,8 +255,6 @@ func (a *API) deletePlant(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
-
-// ---------- channels ----------
 
 func (a *API) listChannels(w http.ResponseWriter, r *http.Request) error {
 	l, err := a.d.Linking.List(r.Context(), userID(r))

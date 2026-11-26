@@ -69,7 +69,7 @@ func TestOutboxSendsDueJob(t *testing.T) {
 	if len(fs.calls) != 1 || fs.calls[0] != "42: Заголовок" {
 		t.Errorf("calls: %v", fs.calls)
 	}
-	// повторный проход не отправляет второй раз
+
 	_, _ = worker(d, fs, "2026-11-23T10:05:00Z").ProcessOnce(context.Background())
 	if len(fs.calls) != 1 {
 		t.Errorf("повторная отправка: %v", fs.calls)

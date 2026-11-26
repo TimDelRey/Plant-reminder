@@ -6,7 +6,7 @@
 Использование: gen_cities.py <cities15000.txt> <alternatenames_RU.txt> <admin1CodesASCII.txt> <out.csv>"""
 import csv, sys
 
-ru = {}  # geonameid -> (score, name)
+ru = {}
 for line in open(sys.argv[2], encoding="utf-8"):
     f = line.rstrip("\n").split("\t")
     if len(f) < 4 or f[2] != "ru": continue
@@ -29,9 +29,6 @@ for line in open(sys.argv[3], encoding='utf-8'):
     if f[0].startswith('RU.') and f[3] in ru:
         admin[f[0][3:]] = ru[f[3]][1]
 
-# Крым и Севастополь: в GeoNames они числятся за UA, но для сервиса это города РФ.
-# Часовой пояс — как у Москвы (Europe/Moscow). Названия — вручную (по ascii-имени GeoNames); районы Севастополя
-# (Балаклава, Корабельная сторона) и мелкие пункты пропускаем.
 CRIMEA = {
     'Sevastopol': ('Севастополь', 'Севастополь'),
     'Simferopol': ('Симферополь', 'Республика Крым'),

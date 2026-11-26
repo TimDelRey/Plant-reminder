@@ -79,7 +79,7 @@ func TestAPITokenLifecycle(t *testing.T) {
 	if _, _, err := s.Authenticate(ctx, ct.Token, ""); err == nil {
 		t.Error("отозванный токен не должен работать")
 	}
-	// чужой пользователь не может отозвать токен
+
 	other, _, _ := s.Register(ctx, "b@example.com", "password-1", testutil.CityID(t, d, "Москва"))
 	c2, _ := s.CreateToken(ctx, u.ID, "second", nil)
 	if err := s.RevokeToken(ctx, other.ID, c2.ID); err == nil {
@@ -95,7 +95,6 @@ func TestPasswordResetByEmail(t *testing.T) {
 	u, session, _ := s.Register(ctx, "anna@example.com", "old-password", testutil.CityID(t, d, "Москва"))
 	api, _ := s.CreateToken(ctx, u.ID, "t", nil)
 
-	// несуществующий email: тот же ответ, письма нет
 	if err := s.RequestPasswordReset(ctx, "ghost@example.com"); err != nil || m.to != "" {
 		t.Fatalf("ghost: err=%v to=%q", err, m.to)
 	}

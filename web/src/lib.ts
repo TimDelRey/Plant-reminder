@@ -27,7 +27,6 @@ export const PRESETS = [
   { id: "phenology", label: "По фенофазе, вручную…", kind: "manual" as const, rule: null },
 ];
 
-/** Определяет пресет периодичности по существующему событию. */
 export function presetOf(ev: CareEvent): string {
   if (ev.recurrence_kind === "rrule") {
     const p = PRESETS.find((x) => x.rule === ev.recurrence_rule);

@@ -14,19 +14,17 @@ import (
 	"plantcare/internal/apperr"
 )
 
-// pgerrcode — код ошибки Postgres unique_violation.
 const uniqueViolation = "23505"
 
 const (
 	linkCodeTTL      = 15 * time.Minute
-	linkCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // без похожих символов
+	linkCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	linkCodeLen      = 6
 )
 
-// Setup — настройки канала на сервере (из окружения).
 type Setup struct {
-	Configured  bool   // есть ли отправщик (токен бота или dev-заглушка)
-	BotUsername string // для диплинка; VK — screen_name сообщества
+	Configured  bool
+	BotUsername string
 }
 
 type ChannelLink struct {
@@ -44,7 +42,6 @@ type ChannelStatus struct {
 	Link        *ChannelLink `json:"link"`
 }
 
-// Linking — привязка каналов к пользователю (коды подключения, вебхуки).
 type Linking struct {
 	DB         *sql.DB
 	Setup      map[Channel]Setup
@@ -143,7 +140,6 @@ func (l *Linking) toStatus(ch Channel, r row, ok bool) ChannelStatus {
 	return st
 }
 
-// List возвращает статус подключения по всем каналам.
 func (l *Linking) List(ctx context.Context, userID int64) ([]ChannelStatus, error) {
 	m, err := l.load(ctx, userID)
 	if err != nil {
@@ -157,7 +153,6 @@ func (l *Linking) List(ctx context.Context, userID int64) ([]ChannelStatus, erro
 	return out, nil
 }
 
-// Status возвращает статус одного канала (для поллинга).
 func (l *Linking) Status(ctx context.Context, userID int64, ch Channel) (ChannelStatus, error) {
 	if !ch.Valid() {
 		return ChannelStatus{}, apperr.NotFound()
@@ -170,7 +165,6 @@ func (l *Linking) Status(ctx context.Context, userID int64, ch Channel) (Channel
 	return l.toStatus(ch, r, ok), nil
 }
 
-// Connect выдаёт одноразовый код подключения и переводит канал в pending.
 func (l *Linking) Connect(ctx context.Context, userID int64, ch Channel) (ChannelStatus, error) {
 	if !ch.Valid() {
 		return ChannelStatus{}, apperr.NotFound()
@@ -206,7 +200,6 @@ func (l *Linking) Connect(ctx context.Context, userID int64, ch Channel) (Channe
 	return ChannelStatus{}, errors.New("не удалось сгенерировать код подключения")
 }
 
-// Disconnect сбрасывает привязку канала.
 func (l *Linking) Disconnect(ctx context.Context, userID int64, ch Channel) (ChannelStatus, error) {
 	if !ch.Valid() {
 		return ChannelStatus{}, apperr.NotFound()
@@ -219,7 +212,6 @@ func (l *Linking) Disconnect(ctx context.Context, userID int64, ch Channel) (Cha
 	return l.Status(ctx, userID, ch)
 }
 
-// HandleIncoming вызывается вебхуками платформ: ищет код подключения в тексте сообщения и привязывает external_id.
 func (l *Linking) HandleIncoming(ctx context.Context, ch Channel, externalID, text string) (bool, error) {
 	if externalID == "" || !ch.Valid() {
 		return false, nil

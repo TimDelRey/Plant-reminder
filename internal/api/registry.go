@@ -1,10 +1,7 @@
 package api
 
-// Route — маршрут HTTP API (путь в синтаксисе chi/OpenAPI: /api/plants/{id}).
 type Route struct{ Method, Path string }
 
-// Registry — реестр действий: «пакет.Тип.Метод» публичной операции домена → ручка API.
-// Парити-тест (parity_test.go) падает, если у домена появилось действие, которого нет ни здесь, ни в InternalOnly.
 var Registry = map[string]Route{
 	"auth.Service.Register":             {"POST", "/api/auth/register"},
 	"auth.Service.Login":                {"POST", "/api/auth/login"},
@@ -42,8 +39,6 @@ var Registry = map[string]Route{
 	"sender.Linking.Status":     {"GET", "/api/channels/{channel}/status"},
 }
 
-// InternalOnly — явные исключения из правила «у каждого действия есть ручка в API».
-// Ключ — «пакет.Тип.Метод» либо «пакет.Тип.*». Значение — обязательная причина; такие записи ревьюятся отдельно.
 var InternalOnly = map[string]string{
 	"auth.Service.Authenticate":     "проверка авторизации в middleware, не действие пользователя",
 	"sender.Linking.HandleIncoming": "вызывается вебхуками платформ (/webhooks/*), они описаны в спеке с тегом internal",
@@ -57,7 +52,6 @@ var InternalOnly = map[string]string{
 	"plantinfo.Client.*":            "клиент Perenual API, не действие пользователя",
 }
 
-// PublicPrefixes — маршруты, доступные без авторизации (всё остальное под /api обязано требовать её).
 var PublicPrefixes = []string{
-	"/api/auth/", "/api/cities", "/api/docs", "/api/openapi.yaml", "/webhooks/",
+	"/api/auth/", "/api/cities", "/api/docs", "/api/openapi.yaml", "/webhooks/", "/internal/",
 }

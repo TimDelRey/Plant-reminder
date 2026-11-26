@@ -3,7 +3,6 @@ import { api, unwrap, type City } from "../api/client";
 
 type Props = { id: string; value: City | null; onChange: (c: City | null) => void; error?: string; label?: string; testid?: string };
 
-/** Автокомплит города из справочника; значение считается выбранным только после клика по подсказке. */
 export default function CityPicker({ id, value, onChange, error, label = "Город", testid = "city-input" }: Props) {
   const [text, setText] = useState(value ? value.name : "");
   const [items, setItems] = useState<City[]>([]);
@@ -21,7 +20,7 @@ export default function CityPicker({ id, value, onChange, error, label = "Гор
       try {
         const res = await unwrap(api.GET("/api/cities", { params: { query: { q, limit: 12 } } }));
         if (my === seq.current) { setItems(res); setActive(0); }
-      } catch { /* подсказки не критичны */ }
+      } catch {}
     }, 150);
   }
 

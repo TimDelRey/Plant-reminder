@@ -1,4 +1,3 @@
-// Package telegram — адаптер отправки через Telegram Bot API (go-telegram/bot).
 package telegram
 
 import (

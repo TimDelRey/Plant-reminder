@@ -19,7 +19,6 @@ import (
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 
-// h превращает обработчик, возвращающий error, в http.HandlerFunc с единым форматом ошибок.
 func h(fn handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := fn(w, r); err != nil {
@@ -106,7 +105,6 @@ func accessLog(next http.Handler) http.Handler {
 	})
 }
 
-// limiter — простой in-memory token bucket по ключу (IP или email), без Redis.
 type limiter struct {
 	mu    sync.Mutex
 	m     map[string]*rate.Limiter

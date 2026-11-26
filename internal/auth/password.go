@@ -12,12 +12,11 @@ import (
 
 const (
 	argonTime    = 2
-	argonMemory  = 19 * 1024 // KiB, минимум OWASP для argon2id
+	argonMemory  = 19 * 1024
 	argonThreads = 1
 	argonKeyLen  = 32
 )
 
-// HashPassword возвращает PHC-строку argon2id.
 func HashPassword(pw string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -28,7 +27,6 @@ func HashPassword(pw string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
-// VerifyPassword сравнивает пароль с PHC-строкой за константное время.
 func VerifyPassword(pw, encoded string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {

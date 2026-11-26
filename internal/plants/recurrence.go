@@ -8,10 +8,8 @@ import (
 	"github.com/teambition/rrule-go"
 )
 
-// DateLayout — формат календарных дат в API и БД.
 const DateLayout = "2006-01-02"
 
-// ParseRule разбирает RRULE (RFC 5545, без DTSTART) и привязывает его к дате start.
 func ParseRule(rule string, start time.Time) (*rrule.RRule, error) {
 	rule = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rule), "RRULE:"))
 	if rule == "" {
@@ -24,15 +22,13 @@ func ParseRule(rule string, start time.Time) (*rrule.RRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	if opt.Freq > rrule.DAILY { // HOURLY, MINUTELY, SECONDLY
+	if opt.Freq > rrule.DAILY {
 		return nil, fmt.Errorf("поддерживается периодичность от одного дня")
 	}
 	opt.Dtstart = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 	return rrule.NewRRule(*opt)
 }
 
-// NextAfter возвращает ближайшую дату по правилу строго после after (даты — в UTC-полночь).
-// ok=false, если повторений больше нет.
 func NextAfter(rule string, due, after time.Time) (next time.Time, ok bool, err error) {
 	r, err := ParseRule(rule, due)
 	if err != nil {
@@ -45,7 +41,6 @@ func NextAfter(rule string, due, after time.Time) (next time.Time, ok bool, err 
 	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC), true, nil
 }
 
-// LocalToday возвращает сегодняшнюю дату в часовом поясе tz как UTC-полночь.
 func LocalToday(now time.Time, tz string) time.Time {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {

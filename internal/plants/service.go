@@ -1,5 +1,3 @@
-// Package plants — растения и события ухода: CRUD, recurrence, лента ближайших дел.
-// Пакет не знает про каналы отправки: события хранят только список имён каналов.
 package plants
 
 import (
@@ -17,8 +15,8 @@ import (
 
 type Service struct {
 	DB   *sql.DB
-	Info *plantinfo.Service // подбор ухода (Perenual); nil — только общий набор
-	Now  func() time.Time   // для тестов; по умолчанию time.Now
+	Info *plantinfo.Service
+	Now  func() time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -65,8 +63,6 @@ func (s *Service) userToday(ctx context.Context, userID int64) (time.Time, error
 	}
 	return LocalToday(s.now(), tz), nil
 }
-
-// ---------- растения ----------
 
 const plantSelect = `SELECT p.id, p.name, p.emoji, p.created_at,
 	(SELECT count(*) FROM care_events e WHERE e.plant_id = p.id),
@@ -150,9 +146,8 @@ func (s *Service) GetPlant(ctx context.Context, userID, plantID int64) (PlantDet
 	return PlantDetail{Plant: p, Events: evs}, err
 }
 
-// UpdatePlant меняет переданные поля одним атомарным UPDATE; владелец проверяется в том же запросе.
 func (s *Service) UpdatePlant(ctx context.Context, userID, plantID int64, in PlantPatch) (Plant, error) {
-	var name, emoji *string // nil — поле не меняется (COALESCE оставит текущее значение)
+	var name, emoji *string
 	if in.Name != nil {
 		n, err := validatePlantName(*in.Name)
 		if err != nil {
@@ -192,8 +187,6 @@ func (s *Service) DeletePlant(ctx context.Context, userID, plantID int64) error 
 	}
 	return nil
 }
-
-// ---------- события ----------
 
 func (s *Service) ListEvents(ctx context.Context, userID, plantID int64) ([]CareEvent, error) {
 	if err := s.ownsPlant(ctx, userID, plantID); err != nil {
@@ -401,8 +394,6 @@ func (s *Service) DeleteEvent(ctx context.Context, userID, eventID int64) error 
 	return nil
 }
 
-// CompleteEvent — «отметить выполненным»: пересчитывает next_due_at.
-// rrule: ближайшая дата строго после сегодняшней (по поясу пользователя); manual: та же дата через год.
 func (s *Service) CompleteEvent(ctx context.Context, userID, eventID int64) (CareEvent, error) {
 	ev, err := s.ownedEvent(ctx, userID, eventID)
 	if err != nil {
@@ -439,7 +430,6 @@ func (s *Service) CompleteEvent(ctx context.Context, userID, eventID int64) (Car
 	return s.eventByID(ctx, eventID)
 }
 
-// ListUpcoming — лента ближайших активных дел по всем растениям пользователя.
 func (s *Service) ListUpcoming(ctx context.Context, userID int64, limit int) ([]UpcomingEvent, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 6
@@ -464,7 +454,6 @@ func (s *Service) ListUpcoming(ctx context.Context, userID int64, limit int) ([]
 	return out, rows.Err()
 }
 
-// connectedChannels — подключённые каналы пользователя (по умолчанию для предлагаемых событий).
 func (s *Service) connectedChannels(ctx context.Context, userID int64) ([]string, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT channel FROM user_channels WHERE user_id = $1 AND status = 'connected' ORDER BY channel`, userID)
 	if err != nil {
@@ -482,8 +471,6 @@ func (s *Service) connectedChannels(ctx context.Context, userID int64) ([]string
 	return out, rows.Err()
 }
 
-// SuggestCare подбирает рекомендации по уходу за растением по справочнику Perenual (ничего не сохраняет).
-// speciesID>0 — взять данные конкретного вида из результатов поиска; иначе вид подбирается по названию растения.
 func (s *Service) SuggestCare(ctx context.Context, userID, plantID int64, speciesID int) (plantinfo.Suggestion, error) {
 	var name string
 	err := s.DB.QueryRowContext(ctx, `SELECT name FROM plants WHERE id = $1 AND user_id = $2`, plantID, userID).Scan(&name)
@@ -504,7 +491,6 @@ func (s *Service) SuggestCare(ctx context.Context, userID, plantID int64, specie
 	return s.info().Suggest(ctx, name, speciesID, today, channels)
 }
 
-// SearchReference показывает, какие растения и сорта есть в справочнике по запросу (без привязки к растению).
 func (s *Service) SearchReference(ctx context.Context, userID int64, q string) (plantinfo.ReferenceSearch, error) {
 	if len(strings.TrimSpace(q)) < 2 {
 		return plantinfo.ReferenceSearch{}, apperr.Validation(map[string]string{"q": "Введите не меньше двух символов"})
@@ -514,13 +500,11 @@ func (s *Service) SearchReference(ctx context.Context, userID int64, q string) (
 
 func (s *Service) info() *plantinfo.Service {
 	if s.Info == nil {
-		return &plantinfo.Service{} // справочник не подключён
+		return &plantinfo.Service{}
 	}
 	return s.Info
 }
 
-// ImportCare сохраняет выбранные пользователем события (например, из предпросмотра SuggestCare).
-// Все или ни одного. Событий «по умолчанию» нет: пустой список — ошибка.
 func (s *Service) ImportCare(ctx context.Context, userID, plantID int64, events []EventInput) ([]CareEvent, error) {
 	if err := s.ownsPlant(ctx, userID, plantID); err != nil {
 		return nil, err
@@ -531,7 +515,7 @@ func (s *Service) ImportCare(ctx context.Context, userID, plantID int64, events 
 	if len(events) > 50 {
 		return nil, apperr.Validation(map[string]string{"events": "Не больше 50 событий за раз"})
 	}
-	// сначала валидируем всё, чтобы не сохранить набор наполовину
+
 	prepared := make([]eventFields, 0, len(events))
 	for i, in := range events {
 		f := eventFields{title: in.Title, category: in.Category, description: in.Description, kind: in.RecurrenceKind,

@@ -1,4 +1,3 @@
-// Package mailer отправляет служебные письма (сброс пароля). Это не канал напоминаний.
 package mailer
 
 import (
@@ -12,7 +11,6 @@ type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
 }
 
-// SMTP отправляет письма через SMTP-сервер. Параметры — только из окружения.
 type SMTP struct {
 	Host, User, Password, From string
 	Port                       int
@@ -33,7 +31,7 @@ func (m *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	if m.User != "" {
 		opts = append(opts, mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover), mail.WithUsername(m.User), mail.WithPassword(m.Password), mail.WithTLSPolicy(mail.TLSMandatory))
 	} else {
-		opts = append(opts, mail.WithTLSPolicy(mail.NoTLS)) // локальный Mailpit/MailHog
+		opts = append(opts, mail.WithTLSPolicy(mail.NoTLS))
 	}
 	c, err := mail.NewClient(m.Host, opts...)
 	if err != nil {
@@ -42,7 +40,6 @@ func (m *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	return c.DialAndSendWithContext(ctx, msg)
 }
 
-// Log — заглушка, когда SMTP не настроен: письмо пишется в лог.
 type Log struct{}
 
 func (Log) Send(_ context.Context, to, subject, body string) error {

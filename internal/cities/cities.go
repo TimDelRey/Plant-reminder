@@ -1,4 +1,3 @@
-// Package cities — справочник городов РФ с часовыми поясами (данные GeoNames, CC BY 4.0).
 package cities
 
 import (
@@ -22,7 +21,6 @@ type Service struct {
 
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// Search ищет города по началу названия; без запроса возвращает самые крупные.
 func (s *Service) Search(ctx context.Context, q string, limit int) ([]City, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 15
@@ -58,7 +56,6 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// ByID возвращает город или apperr 422 для несуществующего city_id.
 func ByID(ctx context.Context, q Querier, id int64) (City, error) {
 	var c City
 	err := q.QueryRowContext(ctx, `SELECT id, name, region, timezone FROM cities WHERE id = $1`, id).

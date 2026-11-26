@@ -14,11 +14,11 @@ func TestNextAfter(t *testing.T) {
 	}{
 		{"FREQ=DAILY", "2026-11-23", "2026-11-23", "2026-11-24", true},
 		{"FREQ=WEEKLY", "2026-11-23", "2026-11-23", "2026-11-30", true},
-		{"FREQ=WEEKLY", "2026-11-23", "2026-12-01", "2026-12-07", true}, // пропущенные повторения не догоняем
+		{"FREQ=WEEKLY", "2026-11-23", "2026-12-01", "2026-12-07", true},
 		{"FREQ=WEEKLY;INTERVAL=2", "2026-11-23", "2026-11-23", "2026-12-07", true},
-		{"FREQ=MONTHLY", "2026-01-31", "2026-01-31", "2026-03-31", true}, // в феврале нет 31-го
+		{"FREQ=MONTHLY", "2026-01-31", "2026-01-31", "2026-03-31", true},
 		{"FREQ=YEARLY", "2026-03-05", "2026-03-05", "2027-03-05", true},
-		{"FREQ=DAILY;COUNT=1", "2026-11-23", "2026-11-23", "", false}, // повторения закончились
+		{"FREQ=DAILY;COUNT=1", "2026-11-23", "2026-11-23", "", false},
 	}
 	for _, c := range cases {
 		got, ok, err := NextAfter(c.rule, d(c.due), d(c.after))
@@ -40,11 +40,11 @@ func TestParseRuleRejects(t *testing.T) {
 }
 
 func TestLocalToday(t *testing.T) {
-	now := time.Date(2026, 11, 23, 20, 0, 0, 0, time.UTC) // 20:00 UTC
+	now := time.Date(2026, 11, 23, 20, 0, 0, 0, time.UTC)
 	if got := LocalToday(now, "Europe/Moscow").Format(DateLayout); got != "2026-11-23" {
 		t.Errorf("Москва: %s", got)
 	}
-	if got := LocalToday(now, "Asia/Vladivostok").Format(DateLayout); got != "2026-11-24" { // +10: уже завтра
+	if got := LocalToday(now, "Asia/Vladivostok").Format(DateLayout); got != "2026-11-24" {
 		t.Errorf("Владивосток: %s", got)
 	}
 }
