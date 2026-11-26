@@ -543,9 +543,10 @@ paths:
       operationId: completeEvent
       summary: Отметить выполненным
       description: |
-        Пересчитывает `next_due_at`: для `recurrence_kind=rrule` — ближайшая дата по правилу строго после
-        сегодняшней; для `manual` — та же дата через год (пользователь может поправить через «Изменить»).
-        Если у правила больше нет повторений, событие становится неактивным.
+        `recurrence_kind=once` — событие остаётся на своей дате и получает `completed_at` (в списке «Выполнено»).
+        `rrule` — `next_due_at` становится ближайшей датой по правилу строго после сегодняшней; если повторений
+        больше нет, событие становится неактивным. `manual` — та же дата через год.
+        Любое выполнение можно отменить через `POST /api/events/{id}/undo-complete` (`can_undo`).
       responses:
         '200':
           description: Событие после пересчёта
@@ -554,6 +555,27 @@ paths:
               schema: { $ref: '#/components/schemas/CareEvent' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/events/{id}/undo-complete:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [events]
+      operationId: undoCompleteEvent
+      summary: Отменить ошибочное «выполнено»
+      description: |
+        Возвращает событие в состояние до последней отметки: прежнюю дату и активность, снимает `completed_at`.
+        Доступно, пока `can_undo=true`: для разовых событий всегда, для остальных — 7 дней после отметки.
+        Любое редактирование события сбрасывает возможность отмены.
+      responses:
+        '200':
+          description: Событие после отмены
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CareEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /api/channels:
     get:
@@ -576,20 +598,21 @@ paths:
     post:
       tags: [channels]
       operationId: connectChannel
-      summary: Начать подключение канала
+      summary: Начать подключение получателя канала
       description: |
         Выдаёт одноразовый код подключения (TTL 15 минут) и инструкцию. Бот не может написать
-        пользователю первым, поэтому пользователь сам отправляет код боту (Telegram — по диплинку
-        `?start=<код>`). После получения кода вебхуком статус становится `connected`.
+        пользователю первым, поэтому человек сам отправляет код боту (Telegram — по диплинку
+        `?start=<код>`). Получателей на канал может быть несколько: каждый присылает свой код со своего
+        аккаунта, и напоминания уходят всем подключённым. Повторный вызов заменяет ещё не использованный код.
+        После получения кода вебхуком человек появляется в `recipients`.
       responses:
         '200':
-          description: Канал в статусе `pending`
+          description: Выдан код подключения (`link`); получатели, подключённые ранее, сохраняются
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChannelStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/NotConfigured' }
 
   /api/channels/{channel}/disconnect:
@@ -598,10 +621,29 @@ paths:
     post:
       tags: [channels]
       operationId: disconnectChannel
-      summary: Отключить канал
+      summary: Отключить канал целиком
+      description: Удаляет всех получателей канала и неиспользованный код подключения.
       responses:
         '200':
           description: Канал отключён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/channels/{channel}/recipients/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Channel' }
+      - { $ref: '#/components/parameters/Id' }
+    delete:
+      tags: [channels]
+      operationId: removeChannelRecipient
+      summary: Отключить одного получателя канала
+      description: Остальные получатели канала продолжают получать напоминания. Уведомления, уже стоящие в очереди для этого человека, не отправляются.
+      responses:
+        '200':
+          description: Статус канала после отключения получателя
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChannelStatus' }
@@ -858,10 +900,11 @@ components:
         - Другое
     RecurrenceKind:
       type: string
-      enum: [rrule, manual]
+      enum: [rrule, manual, once]
       description: |
         `rrule` — календарное правило RFC 5545 (полив, подкормка), следующая дата считается автоматически.
-        `manual` — привязка к фенофазе, дата сдвигается пользователем вручную.
+        `manual` — привязка к фенофазе, после выполнения дата сдвигается на год, дальше её поправляет пользователь.
+        `once` — разовое событие: после выполнения остаётся в списке как выполненное и не повторяется.
 
     City:
       type: object
@@ -978,7 +1021,7 @@ components:
 
     CareEvent:
       type: object
-      required: [id, plant_id, title, category, description, recurrence_kind, recurrence_note, next_due_at, channels, active]
+      required: [id, plant_id, title, category, description, recurrence_kind, recurrence_note, next_due_at, channels, active, can_undo]
       properties:
         id: { type: integer, format: int64 }
         plant_id: { type: integer, format: int64 }
@@ -996,8 +1039,10 @@ components:
         channels:
           type: array
           items: { $ref: '#/components/schemas/ChannelName' }
-          description: Каналы, в которые уйдёт напоминание (без фолбеков)
+          description: "Необязательное ограничение каналов для этого события. Пусто (по умолчанию) — напоминание уходит во все подключённые каналы пользователя (без фолбеков)"
         active: { type: boolean }
+        completed_at: { type: string, format: date-time, nullable: true, description: "Когда событие отмечено выполненным (для `once` — выполнено и ушло в «Выполнено»; для остальных — последняя отметка)" }
+        can_undo: { type: boolean, description: Можно ли отменить последнюю отметку «выполнено» }
     EventInput:
       type: object
       required: [title, category, recurrence_kind, next_due_at]
@@ -1028,6 +1073,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ChannelName' }
         active: { type: boolean }
+        reopen: { type: boolean, description: "Для выполненного разового события: вернуть его в план (снять `completed_at`) с новой датой" }
     UpcomingEvent:
       type: object
       required: [event, plant]
@@ -1132,19 +1178,30 @@ components:
           items: { $ref: '#/components/schemas/SuggestedEvent' }
     ChannelStatus:
       type: object
-      required: [channel, status, configured]
+      required: [channel, status, configured, recipients]
       properties:
         channel: { $ref: '#/components/schemas/ChannelName' }
         status:
           type: string
           enum: [disconnected, pending, connected]
+          description: "`connected` — подключён хотя бы один получатель; `pending` — получателей нет, но выдан действующий код"
         configured: { type: boolean, description: Настроен ли бот этого канала на сервере }
-        connected_at: { type: string, format: date-time, nullable: true }
+        connected_at: { type: string, format: date-time, nullable: true, description: Время последнего подключения получателя }
+        recipients:
+          type: array
+          description: Подключённые получатели канала; напоминание уходит каждому
+          items: { $ref: '#/components/schemas/ChannelRecipient' }
         link:
           nullable: true
-          description: Заполнено только в статусе `pending`
+          description: Заполнено, пока есть действующий код подключения (в том числе при уже подключённых получателях)
           allOf:
             - $ref: '#/components/schemas/ChannelLink'
+    ChannelRecipient:
+      type: object
+      required: [id, connected_at]
+      properties:
+        id: { type: integer, format: int64 }
+        connected_at: { type: string, format: date-time }
     ChannelLink:
       type: object
       required: [code, expires_at, instruction]

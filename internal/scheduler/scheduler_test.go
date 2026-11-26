@@ -222,3 +222,95 @@ func TestInactiveAndFutureIgnored(t *testing.T) {
 		t.Errorf("обработано %d, ожидалось 0", n)
 	}
 }
+
+func TestJobPerConnectedRecipient(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk")
+	if _, err := f.d.Exec(`INSERT INTO user_channels (user_id, channel, status, external_id) VALUES ($1,'vk','connected','mother')`, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	f.event(t, "manual", "", "2026-11-23", "vk")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	jobs := f.jobs(t)
+	if len(jobs) != 2 {
+		t.Fatalf("ожидали по заданию на каждого получателя, получили %d: %+v", len(jobs), jobs)
+	}
+	for _, j := range jobs {
+		if j.status != "pending" {
+			t.Errorf("%+v", j)
+		}
+	}
+	var withRecipient int
+	_ = f.d.QueryRow(`SELECT count(DISTINCT recipient_id) FROM notification_jobs WHERE recipient_id IS NOT NULL`).Scan(&withRecipient)
+	if withRecipient != 2 {
+		t.Errorf("разных получателей в заданиях: %d", withRecipient)
+	}
+}
+
+func TestSecondTickDoesNotDuplicateRecipientJobs(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk")
+	f.event(t, "manual", "", "2026-11-23", "vk")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	tick(t, f, "2026-11-23T11:00:00Z")
+	if n := len(f.jobs(t)); n != 1 {
+		t.Errorf("заданий: %d", n)
+	}
+}
+
+func TestPastDatedEventsAreNotNotified(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk")
+	manual := f.event(t, "manual", "", "2026-11-20", "vk")
+	daily := f.event(t, "rrule", "FREQ=DAILY", "2026-11-20", "vk")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	if jobs := f.jobs(t); len(jobs) != 0 {
+		t.Fatalf("события с датой в прошлом не должны давать уведомлений: %+v", jobs)
+	}
+	if got := f.due(t, daily); got != "2026-11-23" {
+		t.Errorf("ежедневное событие должно сдвинуться на сегодня без уведомления: %s", got)
+	}
+	if got := f.due(t, manual); got != "2026-11-20" {
+		t.Errorf("разовое прошлое событие остаётся просроченным: %s", got)
+	}
+	tick(t, f, "2026-11-23T11:00:00Z")
+	if jobs := f.jobs(t); len(jobs) != 1 {
+		t.Fatalf("ежедневное событие после сдвига должно уведомить сегодня один раз: %+v", jobs)
+	}
+}
+
+func TestDoneOnceEventIsNotNotified(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk")
+	id := f.event(t, "once", "", "2026-11-23", "vk")
+	if _, err := f.d.Exec(`UPDATE care_events SET completed_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, f, "2026-11-23T10:00:00Z")
+	if jobs := f.jobs(t); len(jobs) != 0 {
+		t.Fatalf("выполненное разовое событие уведомлять не нужно: %+v", jobs)
+	}
+}
+
+func TestEmptyChannelsMeanAllConnectedChannels(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.connect(t, "vk", "telegram")
+	f.event(t, "manual", "", "2026-11-23", "")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	got := map[string]string{}
+	for _, j := range f.jobs(t) {
+		got[j.channel] = j.status
+	}
+	if len(got) != 2 || got["vk"] != "pending" || got["telegram"] != "pending" {
+		t.Fatalf("без явных каналов напоминание должно уйти во все подключённые: %v", got)
+	}
+}
+
+func TestEmptyChannelsWithoutConnectedChannelsCreateNoJobs(t *testing.T) {
+	f := newFixture(t, "Москва")
+	f.event(t, "manual", "", "2026-11-23", "")
+	tick(t, f, "2026-11-23T10:00:00Z")
+	if jobs := f.jobs(t); len(jobs) != 0 {
+		t.Fatalf("нет подключённых каналов: заданий быть не должно: %+v", jobs)
+	}
+}

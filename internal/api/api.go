@@ -106,6 +106,7 @@ func NewRouter(d Deps) http.Handler {
 		p.Patch("/api/events/{id}", h(a.updateEvent))
 		p.Delete("/api/events/{id}", h(a.deleteEvent))
 		p.Post("/api/events/{id}/complete", h(a.completeEvent))
+		p.Post("/api/events/{id}/undo-complete", h(a.undoCompleteEvent))
 
 		p.Get("/api/channels", h(a.listChannels))
 		p.Post("/api/channels/{channel}/connect", h(a.channelOp(func(r *http.Request, ch sender.Channel) (sender.ChannelStatus, error) {
@@ -113,6 +114,13 @@ func NewRouter(d Deps) http.Handler {
 		})))
 		p.Post("/api/channels/{channel}/disconnect", h(a.channelOp(func(r *http.Request, ch sender.Channel) (sender.ChannelStatus, error) {
 			return a.d.Linking.Disconnect(r.Context(), userID(r), ch)
+		})))
+		p.Delete("/api/channels/{channel}/recipients/{id}", h(a.channelOp(func(r *http.Request, ch sender.Channel) (sender.ChannelStatus, error) {
+			id, err := idParam(r, "id")
+			if err != nil {
+				return sender.ChannelStatus{}, err
+			}
+			return a.d.Linking.RemoveRecipient(r.Context(), userID(r), ch, id)
 		})))
 		p.Get("/api/channels/{channel}/status", h(a.channelOp(func(r *http.Request, ch sender.Channel) (sender.ChannelStatus, error) {
 			return a.d.Linking.Status(r.Context(), userID(r), ch)

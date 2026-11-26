@@ -17,17 +17,19 @@ type PlantDetail struct {
 }
 
 type CareEvent struct {
-	ID             int64    `json:"id"`
-	PlantID        int64    `json:"plant_id"`
-	Title          string   `json:"title"`
-	Category       string   `json:"category"`
-	Description    string   `json:"description"`
-	RecurrenceKind string   `json:"recurrence_kind"`
-	RecurrenceRule *string  `json:"recurrence_rule"`
-	RecurrenceNote string   `json:"recurrence_note"`
-	NextDueAt      string   `json:"next_due_at"`
-	Channels       []string `json:"channels"`
-	Active         bool     `json:"active"`
+	ID             int64      `json:"id"`
+	PlantID        int64      `json:"plant_id"`
+	Title          string     `json:"title"`
+	Category       string     `json:"category"`
+	Description    string     `json:"description"`
+	RecurrenceKind string     `json:"recurrence_kind"`
+	RecurrenceRule *string    `json:"recurrence_rule"`
+	RecurrenceNote string     `json:"recurrence_note"`
+	NextDueAt      string     `json:"next_due_at"`
+	Channels       []string   `json:"channels"`
+	Active         bool       `json:"active"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	CanUndo        bool       `json:"can_undo"`
 }
 
 type UpcomingEvent struct {
@@ -71,6 +73,7 @@ type EventPatch struct {
 	NextDueAt      *string  `json:"next_due_at"`
 	Channels       []string `json:"channels"`
 	Active         *bool    `json:"active"`
+	Reopen         *bool    `json:"reopen"`
 }
 
 var Categories = []string{

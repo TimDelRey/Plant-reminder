@@ -34,11 +34,17 @@ type ChannelLink struct {
 	Instruction string    `json:"instruction"`
 }
 
+type Recipient struct {
+	ID          int64     `json:"id"`
+	ConnectedAt time.Time `json:"connected_at"`
+}
+
 type ChannelStatus struct {
 	Channel     Channel      `json:"channel"`
 	Status      string       `json:"status"`
 	Configured  bool         `json:"configured"`
 	ConnectedAt *time.Time   `json:"connected_at"`
+	Recipients  []Recipient  `json:"recipients"`
 	Link        *ChannelLink `json:"link"`
 }
 
@@ -95,47 +101,53 @@ func (l *Linking) link(ch Channel, code string, exp time.Time) *ChannelLink {
 }
 
 type row struct {
+	id          int64
 	status      string
 	code        sql.NullString
 	exp         sql.NullTime
 	connectedAt sql.NullTime
 }
 
-func (l *Linking) load(ctx context.Context, userID int64) (map[Channel]row, error) {
-	rows, err := l.DB.QueryContext(ctx, `SELECT channel, status, link_code, link_code_expires_at, connected_at FROM user_channels WHERE user_id = $1`, userID)
+func (l *Linking) load(ctx context.Context, userID int64) (map[Channel][]row, error) {
+	rows, err := l.DB.QueryContext(ctx, `SELECT id, channel, status, link_code, link_code_expires_at, connected_at
+		FROM user_channels WHERE user_id = $1 ORDER BY connected_at NULLS LAST, id`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	m := map[Channel]row{}
+	m := map[Channel][]row{}
 	for rows.Next() {
 		var ch string
 		var r row
-		if err := rows.Scan(&ch, &r.status, &r.code, &r.exp, &r.connectedAt); err != nil {
+		if err := rows.Scan(&r.id, &ch, &r.status, &r.code, &r.exp, &r.connectedAt); err != nil {
 			return nil, err
 		}
-		m[Channel(ch)] = r
+		m[Channel(ch)] = append(m[Channel(ch)], r)
 	}
 	return m, rows.Err()
 }
 
-func (l *Linking) toStatus(ch Channel, r row, ok bool) ChannelStatus {
-	st := ChannelStatus{Channel: ch, Status: "disconnected", Configured: l.Setup[ch].Configured}
-	if !ok {
-		return st
+func (l *Linking) toStatus(ch Channel, rows []row) ChannelStatus {
+	st := ChannelStatus{Channel: ch, Status: "disconnected", Configured: l.Setup[ch].Configured, Recipients: []Recipient{}}
+	for _, r := range rows {
+		switch r.status {
+		case "connected":
+			at := r.connectedAt.Time
+			st.Recipients = append(st.Recipients, Recipient{ID: r.id, ConnectedAt: at})
+			if st.ConnectedAt == nil || at.After(*st.ConnectedAt) {
+				st.ConnectedAt = &at
+			}
+		case "pending":
+			if r.code.Valid && r.exp.Valid && r.exp.Time.After(l.now()) {
+				st.Link = l.link(ch, r.code.String, r.exp.Time)
+			}
+		}
 	}
-	switch r.status {
-	case "connected":
+	switch {
+	case len(st.Recipients) > 0:
 		st.Status = "connected"
-		if r.connectedAt.Valid {
-			t := r.connectedAt.Time
-			st.ConnectedAt = &t
-		}
-	case "pending":
-		if r.code.Valid && r.exp.Valid && r.exp.Time.After(l.now()) {
-			st.Status = "pending"
-			st.Link = l.link(ch, r.code.String, r.exp.Time)
-		}
+	case st.Link != nil:
+		st.Status = "pending"
 	}
 	return st
 }
@@ -147,8 +159,7 @@ func (l *Linking) List(ctx context.Context, userID int64) ([]ChannelStatus, erro
 	}
 	out := make([]ChannelStatus, 0, len(AllChannels))
 	for _, ch := range AllChannels {
-		r, ok := m[ch]
-		out = append(out, l.toStatus(ch, r, ok))
+		out = append(out, l.toStatus(ch, m[ch]))
 	}
 	return out, nil
 }
@@ -161,8 +172,7 @@ func (l *Linking) Status(ctx context.Context, userID int64, ch Channel) (Channel
 	if err != nil {
 		return ChannelStatus{}, err
 	}
-	r, ok := m[ch]
-	return l.toStatus(ch, r, ok), nil
+	return l.toStatus(ch, m[ch]), nil
 }
 
 func (l *Linking) Connect(ctx context.Context, userID int64, ch Channel) (ChannelStatus, error) {
@@ -172,23 +182,16 @@ func (l *Linking) Connect(ctx context.Context, userID int64, ch Channel) (Channe
 	if !l.Setup[ch].Configured {
 		return ChannelStatus{}, apperr.New(503, "not_configured", "Канал не настроен на сервере: не задан токен бота")
 	}
-	cur, err := l.load(ctx, userID)
-	if err != nil {
-		return ChannelStatus{}, err
-	}
-	if r, ok := cur[ch]; ok && r.status == "connected" {
-		return ChannelStatus{}, apperr.Conflict("Канал уже подключён — сначала отключите его")
-	}
 	exp := l.now().Add(linkCodeTTL)
 	for attempt := 0; attempt < 5; attempt++ {
 		code, err := newCode()
 		if err != nil {
 			return ChannelStatus{}, err
 		}
-		_, err = l.DB.ExecContext(ctx, `INSERT INTO user_channels (user_id, channel, status, link_code, link_code_expires_at)
-			VALUES ($1,$2,'pending',$3,$4)
-			ON CONFLICT (user_id, channel) DO UPDATE SET status='pending', external_id=NULL, link_code=EXCLUDED.link_code,
-				link_code_expires_at=EXCLUDED.link_code_expires_at, connected_at=NULL`, userID, string(ch), code, exp)
+		_, err = l.DB.ExecContext(ctx, `WITH stale AS (
+				DELETE FROM user_channels WHERE user_id = $1 AND channel = $2 AND status <> 'connected')
+			INSERT INTO user_channels (user_id, channel, status, link_code, link_code_expires_at)
+			VALUES ($1, $2, 'pending', $3, $4)`, userID, string(ch), code, exp)
 		if err == nil {
 			return l.Status(ctx, userID, ch)
 		}
@@ -204,10 +207,23 @@ func (l *Linking) Disconnect(ctx context.Context, userID int64, ch Channel) (Cha
 	if !ch.Valid() {
 		return ChannelStatus{}, apperr.NotFound()
 	}
-	_, err := l.DB.ExecContext(ctx, `UPDATE user_channels SET status='disconnected', external_id=NULL, link_code=NULL,
-		link_code_expires_at=NULL, connected_at=NULL WHERE user_id=$1 AND channel=$2`, userID, string(ch))
+	if _, err := l.DB.ExecContext(ctx, `DELETE FROM user_channels WHERE user_id = $1 AND channel = $2`, userID, string(ch)); err != nil {
+		return ChannelStatus{}, err
+	}
+	return l.Status(ctx, userID, ch)
+}
+
+func (l *Linking) RemoveRecipient(ctx context.Context, userID int64, ch Channel, recipientID int64) (ChannelStatus, error) {
+	if !ch.Valid() {
+		return ChannelStatus{}, apperr.NotFound()
+	}
+	res, err := l.DB.ExecContext(ctx, `DELETE FROM user_channels WHERE id = $1 AND user_id = $2 AND channel = $3 AND status = 'connected'`,
+		recipientID, userID, string(ch))
 	if err != nil {
 		return ChannelStatus{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ChannelStatus{}, apperr.NotFound()
 	}
 	return l.Status(ctx, userID, ch)
 }
@@ -222,20 +238,53 @@ func (l *Linking) HandleIncoming(ctx context.Context, ch Channel, externalID, te
 		if len(tok) != linkCodeLen {
 			continue
 		}
-		res, err := l.DB.ExecContext(ctx, `UPDATE user_channels SET status='connected', external_id=$3, link_code=NULL,
-			link_code_expires_at=NULL, connected_at=$4
-			WHERE channel=$1 AND link_code=$2 AND status='pending' AND link_code_expires_at > $4`, string(ch), tok, externalID, l.now())
+		linked, err := l.consumeCode(ctx, ch, tok, externalID)
 		if err != nil {
 			return false, err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			if l.Dispatcher != nil {
-				if err := l.Dispatcher.Send(ctx, ch, externalID, Message{Title: "✅ Канал подключён", Body: "Теперь напоминания об уходе за растениями будут приходить сюда."}); err != nil {
-					slog.Warn("не удалось отправить подтверждение подключения", "channel", ch, "err", err)
-				}
-			}
-			return true, nil
+		if !linked {
+			continue
 		}
+		if l.Dispatcher != nil {
+			if err := l.Dispatcher.Send(ctx, ch, externalID, Message{Title: "✅ Канал подключён", Body: "Теперь напоминания об уходе за растениями будут приходить сюда."}); err != nil {
+				slog.Warn("не удалось отправить подтверждение подключения", "channel", ch, "err", err)
+			}
+		}
+		return true, nil
 	}
 	return false, nil
+}
+
+func (l *Linking) consumeCode(ctx context.Context, ch Channel, code, externalID string) (bool, error) {
+	now := l.now()
+	tx, err := l.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var id, userID int64
+	err = tx.QueryRowContext(ctx, `SELECT id, user_id FROM user_channels
+		WHERE channel = $1 AND link_code = $2 AND status = 'pending' AND link_code_expires_at > $3 FOR UPDATE`,
+		string(ch), code, now).Scan(&id, &userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_channels WHERE user_id = $1 AND channel = $2 AND external_id = $3)`,
+		userID, string(ch), externalID).Scan(&exists); err != nil {
+		return false, err
+	}
+	if exists {
+		_, err = tx.ExecContext(ctx, `DELETE FROM user_channels WHERE id = $1`, id)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE user_channels SET status = 'connected', external_id = $2, link_code = NULL,
+			link_code_expires_at = NULL, connected_at = $3 WHERE id = $1`, id, externalID, now)
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }

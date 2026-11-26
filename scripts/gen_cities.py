@@ -55,6 +55,9 @@ for line in open(sys.argv[1], encoding="utf-8"):
         continue
     if f[8] != "RU" or f[0] not in ru: continue
     rows.append((ru[f[0]][1], admin.get(f[10], ''), f[17], int(f[14] or 0), f[4], f[5]))
+import re
+_generic = re.compile(r"(?<=\S )(Область|Край|Округ|Автономный|Автономная)\b")
+rows = [(n, _generic.sub(lambda m: m.group(1).lower(), reg), tz, pop, lat, lon) for n, reg, tz, pop, lat, lon in rows]
 rows.sort(key=lambda r: -r[3])
 with open(sys.argv[4], "w", encoding="utf-8", newline="") as fh:
     w = csv.writer(fh); w.writerow(["name","region","timezone","population","lat","lon"]); w.writerows(rows)

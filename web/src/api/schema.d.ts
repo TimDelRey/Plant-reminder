@@ -392,12 +392,38 @@ export interface paths {
         put?: never;
         /**
          * Отметить выполненным
-         * @description Пересчитывает `next_due_at`: для `recurrence_kind=rrule` — ближайшая дата по правилу строго после
-         *     сегодняшней; для `manual` — та же дата через год (пользователь может поправить через «Изменить»).
-         *     Если у правила больше нет повторений, событие становится неактивным.
+         * @description `recurrence_kind=once` — событие остаётся на своей дате и получает `completed_at` (в списке «Выполнено»).
+         *     `rrule` — `next_due_at` становится ближайшей датой по правилу строго после сегодняшней; если повторений
+         *     больше нет, событие становится неактивным. `manual` — та же дата через год.
+         *     Любое выполнение можно отменить через `POST /api/events/{id}/undo-complete` (`can_undo`).
          *
          */
         post: operations["completeEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/{id}/undo-complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отменить ошибочное «выполнено»
+         * @description Возвращает событие в состояние до последней отметки: прежнюю дату и активность, снимает `completed_at`.
+         *     Доступно, пока `can_undo=true`: для разовых событий всегда, для остальных — 7 дней после отметки.
+         *     Любое редактирование события сбрасывает возможность отмены.
+         *
+         */
+        post: operations["undoCompleteEvent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -433,10 +459,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Начать подключение канала
+         * Начать подключение получателя канала
          * @description Выдаёт одноразовый код подключения (TTL 15 минут) и инструкцию. Бот не может написать
-         *     пользователю первым, поэтому пользователь сам отправляет код боту (Telegram — по диплинку
-         *     `?start=<код>`). После получения кода вебхуком статус становится `connected`.
+         *     пользователю первым, поэтому человек сам отправляет код боту (Telegram — по диплинку
+         *     `?start=<код>`). Получателей на канал может быть несколько: каждый присылает свой код со своего
+         *     аккаунта, и напоминания уходят всем подключённым. Повторный вызов заменяет ещё не использованный код.
+         *     После получения кода вебхуком человек появляется в `recipients`.
          *
          */
         post: operations["connectChannel"];
@@ -457,9 +485,35 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Отключить канал */
+        /**
+         * Отключить канал целиком
+         * @description Удаляет всех получателей канала и неиспользованный код подключения.
+         */
         post: operations["disconnectChannel"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{channel}/recipients/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel: components["parameters"]["Channel"];
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Отключить одного получателя канала
+         * @description Остальные получатели канала продолжают получать напоминания. Уведомления, уже стоящие в очереди для этого человека, не отправляются.
+         */
+        delete: operations["removeChannelRecipient"];
         options?: never;
         head?: never;
         patch?: never;
@@ -630,11 +684,12 @@ export interface components {
         EventCategory: "Полив" | "Влагозарядковый полив" | "Обрезка санитарная" | "Обрезка формирующая" | "Подкормка" | "Обработка от болезней и вредителей" | "Побелка стволов" | "Защита от грызунов" | "Удаление поросли" | "Прореживание завязей" | "Уборка листвы и падалицы" | "Перекопка приствольного круга" | "Сбор урожая" | "Другое";
         /**
          * @description `rrule` — календарное правило RFC 5545 (полив, подкормка), следующая дата считается автоматически.
-         *     `manual` — привязка к фенофазе, дата сдвигается пользователем вручную.
+         *     `manual` — привязка к фенофазе, после выполнения дата сдвигается на год, дальше её поправляет пользователь.
+         *     `once` — разовое событие: после выполнения остаётся в списке как выполненное и не повторяется.
          *
          * @enum {string}
          */
-        RecurrenceKind: "rrule" | "manual";
+        RecurrenceKind: "rrule" | "manual" | "once";
         City: {
             /** Format: int64 */
             id: number;
@@ -755,9 +810,16 @@ export interface components {
             recurrence_note: string;
             /** Format: date */
             next_due_at: string;
-            /** @description Каналы, в которые уйдёт напоминание (без фолбеков) */
+            /** @description Необязательное ограничение каналов для этого события. Пусто (по умолчанию) — напоминание уходит во все подключённые каналы пользователя (без фолбеков) */
             channels: components["schemas"]["ChannelName"][];
             active: boolean;
+            /**
+             * Format: date-time
+             * @description Когда событие отмечено выполненным (для `once` — выполнено и ушло в «Выполнено»; для остальных — последняя отметка)
+             */
+            completed_at?: string | null;
+            /** @description Можно ли отменить последнюю отметку «выполнено» */
+            can_undo: boolean;
         };
         EventInput: {
             title: string;
@@ -787,6 +849,8 @@ export interface components {
             next_due_at?: string;
             channels?: components["schemas"]["ChannelName"][];
             active?: boolean;
+            /** @description Для выполненного разового события: вернуть его в план (снять `completed_at`) с новой датой */
+            reopen?: boolean;
         };
         UpcomingEvent: {
             event: components["schemas"]["CareEvent"];
@@ -874,14 +938,28 @@ export interface components {
         };
         ChannelStatus: {
             channel: components["schemas"]["ChannelName"];
-            /** @enum {string} */
+            /**
+             * @description `connected` — подключён хотя бы один получатель; `pending` — получателей нет, но выдан действующий код
+             * @enum {string}
+             */
             status: "disconnected" | "pending" | "connected";
             /** @description Настроен ли бот этого канала на сервере */
             configured: boolean;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Время последнего подключения получателя
+             */
             connected_at?: string | null;
-            /** @description Заполнено только в статусе `pending` */
+            /** @description Подключённые получатели канала; напоминание уходит каждому */
+            recipients: components["schemas"]["ChannelRecipient"][];
+            /** @description Заполнено, пока есть действующий код подключения (в том числе при уже подключённых получателях) */
             link?: components["schemas"]["ChannelLink"] | null;
+        };
+        ChannelRecipient: {
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            connected_at: string;
         };
         ChannelLink: {
             /** @example K7P2QX */
@@ -1684,6 +1762,31 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    undoCompleteEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Событие после отмены */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CareEvent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     listChannels: {
         parameters: {
             query?: never;
@@ -1716,7 +1819,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Канал в статусе `pending` */
+            /** @description Выдан код подключения (`link`); получатели, подключённые ранее, сохраняются */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1727,7 +1830,6 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
             503: components["responses"]["NotConfigured"];
         };
     };
@@ -1743,6 +1845,31 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Канал отключён */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removeChannelRecipient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel: components["parameters"]["Channel"];
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Статус канала после отключения получателя */
             200: {
                 headers: {
                     [name: string]: unknown;

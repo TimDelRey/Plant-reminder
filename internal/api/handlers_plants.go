@@ -123,6 +123,19 @@ func (a *API) deleteEvent(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *API) undoCompleteEvent(w http.ResponseWriter, r *http.Request) error {
+	id, err := idParam(r, "id")
+	if err != nil {
+		return err
+	}
+	ev, err := a.d.Plants.UndoCompleteEvent(r.Context(), userID(r), id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, ev)
+	return nil
+}
+
 func (a *API) completeEvent(w http.ResponseWriter, r *http.Request) error {
 	id, err := idParam(r, "id")
 	if err != nil {

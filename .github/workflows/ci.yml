@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: plantcare
+          POSTGRES_PASSWORD: plantcare
+          POSTGRES_DB: plantcare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U plantcare"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://plantcare:plantcare@localhost:5432/plantcare_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frontend build
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Go checks
+        run: |
+          test -z "$(gofmt -l cmd internal migrations web)"
+          go vet ./...
+          go test -p 1 -count=1 ./...

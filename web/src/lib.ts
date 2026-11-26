@@ -17,7 +17,7 @@ export const CHANNELS: { id: ChannelName; name: string; icon: string; desc: stri
 export const channelMeta = (id: string) => CHANNELS.find((c) => c.id === id);
 
 export const PRESETS = [
-  { id: "once", label: "Разово", kind: "manual" as const, rule: null },
+  { id: "once", label: "Разово", kind: "once" as const, rule: null },
   { id: "daily", label: "Каждый день", kind: "rrule" as const, rule: "FREQ=DAILY" },
   { id: "weekly", label: "Раз в неделю", kind: "rrule" as const, rule: "FREQ=WEEKLY" },
   { id: "biweekly", label: "Раз в 2 недели", kind: "rrule" as const, rule: "FREQ=WEEKLY;INTERVAL=2" },
@@ -32,7 +32,7 @@ export function presetOf(ev: CareEvent): string {
     const p = PRESETS.find((x) => x.rule === ev.recurrence_rule);
     return p ? p.id : "custom";
   }
-  return ev.recurrence_note === "Разово" || ev.recurrence_note === "" ? "once" : "phenology";
+  return ev.recurrence_kind === "once" ? "once" : "phenology";
 }
 
 export function parseDate(s: string): Date {
@@ -52,6 +52,7 @@ export function daysUntil(s: string): number {
   t.setHours(0, 0, 0, 0);
   return Math.round((parseDate(s).getTime() - t.getTime()) / 86400000);
 }
+export const isDoneOnce = (ev: CareEvent) => ev.recurrence_kind === "once" && !!ev.completed_at;
 export const relLabel = (d: number) => (d < 0 ? "просрочено" : d === 0 ? "сегодня" : d === 1 ? "завтра" : `через ${d} дн.`);
 export const relClass = (d: number) => (d <= 3 ? "soon" : "ok");
 export function pluralEvents(n: number): string {
@@ -60,6 +61,10 @@ export function pluralEvents(n: number): string {
   if (n10 === 1) return "событие";
   if (n10 >= 2 && n10 <= 4) return "события";
   return "событий";
+}
+export function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 export function fmtDateTime(s: string): string {
   return new Date(s).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });

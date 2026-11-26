@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -79,6 +80,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		JOIN users u ON u.id = p.user_id
 		JOIN cities c ON c.id = u.city_id
 		WHERE e.active AND e.last_notified_for IS DISTINCT FROM e.next_due_at
+		  AND NOT (e.recurrence_kind = 'once' AND e.completed_at IS NOT NULL)
 		  AND e.next_due_at <= ($1::timestamptz AT TIME ZONE c.timezone)::date
 		ORDER BY e.id LIMIT 500 FOR UPDATE OF e SKIP LOCKED`, now)
 	if err != nil {
@@ -110,31 +112,34 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			scheduled = now.UTC().Truncate(time.Second)
 		}
 
-		connected, err := connectedChannels(ctx, tx, e.userID)
-		if err != nil {
-			return 0, err
-		}
-		title := "🌿 " + e.plantName + " — " + e.title
-		if e.channels != "" {
-			for _, ch := range strings.Split(e.channels, ",") {
-				status, lastErr := "pending", sql.NullString{}
-				if !connected[ch] {
-					status, lastErr = "failed", sql.NullString{String: "канал не подключён", Valid: true}
+		today := plants.LocalToday(now, e.tz)
+		past := e.due.Before(today)
+		if !past {
+			recipients, err := connectedRecipients(ctx, tx, e.userID)
+			if err != nil {
+				return 0, err
+			}
+			title := "🌿 " + e.plantName + " — " + e.title
+			for _, ch := range targetChannels(e.channels, recipients) {
+				ids := recipients[ch]
+				if len(ids) == 0 {
+					if err := insertJob(ctx, tx, e, ch, title, scheduled, sql.NullInt64{}); err != nil {
+						return 0, err
+					}
+					continue
 				}
-				if _, err := tx.ExecContext(ctx, `INSERT INTO notification_jobs
-					(care_event_id, user_id, channel, title, body, scheduled_at, status, last_error)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-					e.id, e.userID, ch, title, e.desc, scheduled, status, lastErr); err != nil {
-					return 0, err
+				for _, id := range ids {
+					if err := insertJob(ctx, tx, e, ch, title, scheduled, sql.NullInt64{Int64: id, Valid: true}); err != nil {
+						return 0, err
+					}
 				}
 			}
 		}
 
 		if e.kind == "rrule" && e.rule.Valid {
-			today := plants.LocalToday(now, e.tz)
 			base := e.due
-			if today.After(base) {
-				base = today
+			if past {
+				base = today.AddDate(0, 0, -1)
 			}
 			next, ok, err := plants.NextAfter(e.rule.String, e.due, base)
 			switch {
@@ -159,19 +164,44 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	return len(events), tx.Commit()
 }
 
-func connectedChannels(ctx context.Context, tx *sql.Tx, userID int64) (map[string]bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT channel FROM user_channels WHERE user_id = $1 AND status = 'connected'`, userID)
+func targetChannels(explicit string, recipients map[string][]int64) []string {
+	if explicit != "" {
+		return strings.Split(explicit, ",")
+	}
+	out := make([]string, 0, len(recipients))
+	for ch := range recipients {
+		out = append(out, ch)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func insertJob(ctx context.Context, tx *sql.Tx, e dueEvent, channel, title string, scheduled time.Time, recipient sql.NullInt64) error {
+	status, lastErr := "pending", sql.NullString{}
+	if !recipient.Valid {
+		status, lastErr = "failed", sql.NullString{String: "канал не подключён", Valid: true}
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO notification_jobs
+		(care_event_id, user_id, channel, recipient_id, title, body, scheduled_at, status, last_error)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+		e.id, e.userID, channel, recipient, title, e.desc, scheduled, status, lastErr)
+	return err
+}
+
+func connectedRecipients(ctx context.Context, tx *sql.Tx, userID int64) (map[string][]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT channel, id FROM user_channels WHERE user_id = $1 AND status = 'connected' ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	m := map[string]bool{}
+	m := map[string][]int64{}
 	for rows.Next() {
 		var c string
-		if err := rows.Scan(&c); err != nil {
+		var id int64
+		if err := rows.Scan(&c, &id); err != nil {
 			return nil, err
 		}
-		m[c] = true
+		m[c] = append(m[c], id)
 	}
 	return m, rows.Err()
 }

@@ -27,16 +27,22 @@ func (s *Service) now() time.Time {
 }
 
 const eventCols = `e.id, e.plant_id, e.title, e.category, e.description, e.recurrence_kind, e.recurrence_rule,
-	e.recurrence_note, e.next_due_at, array_to_string(e.channels, ','), e.active`
+	e.recurrence_note, e.next_due_at, array_to_string(e.channels, ','), e.active, e.completed_at,
+	(e.completed_at IS NOT NULL AND (e.recurrence_kind = 'once' OR e.completed_at > now() - interval '7 days'))`
 
 func scanEvent(row interface{ Scan(...any) error }, extra ...any) (CareEvent, error) {
 	var ev CareEvent
 	var due time.Time
 	var ch string
+	var completed sql.NullTime
 	dest := append([]any{&ev.ID, &ev.PlantID, &ev.Title, &ev.Category, &ev.Description, &ev.RecurrenceKind, &ev.RecurrenceRule,
-		&ev.RecurrenceNote, &due, &ch, &ev.Active}, extra...)
+		&ev.RecurrenceNote, &due, &ch, &ev.Active, &completed, &ev.CanUndo}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return ev, err
+	}
+	if completed.Valid {
+		t := completed.Time
+		ev.CompletedAt = &t
 	}
 	ev.NextDueAt = due.Format(DateLayout)
 	ev.Channels = []string{}
@@ -66,7 +72,7 @@ func (s *Service) userToday(ctx context.Context, userID int64) (time.Time, error
 
 const plantSelect = `SELECT p.id, p.name, p.emoji, p.created_at,
 	(SELECT count(*) FROM care_events e WHERE e.plant_id = p.id),
-	(SELECT min(e.next_due_at) FROM care_events e WHERE e.plant_id = p.id AND e.active)
+	(SELECT min(e.next_due_at) FROM care_events e WHERE e.plant_id = p.id AND e.active AND NOT (e.recurrence_kind = 'once' AND e.completed_at IS NOT NULL))
 FROM plants p`
 
 func scanPlant(row interface{ Scan(...any) error }) (Plant, error) {
@@ -267,15 +273,15 @@ func (f *eventFields) validate() error {
 		if f.rule == nil || strings.TrimSpace(*f.rule) == "" {
 			fields["recurrence_rule"] = "Укажите правило повторения"
 		} else if _, err := ParseRule(*f.rule, f.due); err != nil {
-			fields["recurrence_rule"] = "Некорректное правило: " + err.Error()
+			fields["recurrence_rule"] = "Некорректное правило повторения"
 		} else {
 			r := strings.TrimPrefix(strings.TrimSpace(*f.rule), "RRULE:")
 			f.rule = &r
 		}
-	case "manual":
+	case "manual", "once":
 		f.rule = nil
 	default:
-		fields["recurrence_kind"] = "Допустимо: rrule или manual"
+		fields["recurrence_kind"] = "Допустимо: rrule, manual или once"
 	}
 	chs, msg := validateChannels(f.channels)
 	if msg != "" {
@@ -374,9 +380,15 @@ func (s *Service) UpdateEvent(ctx context.Context, userID, eventID int64, in Eve
 	if err := f.validate(); err != nil {
 		return CareEvent{}, err
 	}
+	reopen := in.Reopen != nil && *in.Reopen
+	keepDone := cur.RecurrenceKind == "once" && f.kind == "once" && cur.CompletedAt != nil && !reopen
 	_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET title=$1, category=$2, description=$3, recurrence_kind=$4, recurrence_rule=$5,
-		recurrence_note=$6, next_due_at=$7, channels=string_to_array($8, ','), active=$9 WHERE id=$10`,
-		f.title, f.category, strings.TrimSpace(f.description), f.kind, f.rule, f.note, f.due, strings.Join(f.channels, ","), f.active, eventID)
+		recurrence_note=$6, next_due_at=$7, channels=string_to_array($8, ','), active=$9,
+		completed_at = CASE WHEN $11 THEN completed_at END,
+		prev_due_at = CASE WHEN $11 THEN prev_due_at END,
+		prev_active = CASE WHEN $11 THEN prev_active END
+		WHERE id=$10`,
+		f.title, f.category, strings.TrimSpace(f.description), f.kind, f.rule, f.note, f.due, strings.Join(f.channels, ","), f.active, eventID, keepDone)
 	if err != nil {
 		return CareEvent{}, err
 	}
@@ -399,33 +411,71 @@ func (s *Service) CompleteEvent(ctx context.Context, userID, eventID int64) (Car
 	if err != nil {
 		return CareEvent{}, err
 	}
+	if ev.RecurrenceKind == "once" && ev.CompletedAt != nil {
+		return ev, nil
+	}
 	today, err := s.userToday(ctx, userID)
 	if err != nil {
 		return CareEvent{}, err
 	}
 	due, _ := parseDate(ev.NextDueAt)
-	if ev.RecurrenceKind == "rrule" && ev.RecurrenceRule != nil {
+	nextDue, active := due, ev.Active
+	switch {
+	case ev.RecurrenceKind == "rrule" && ev.RecurrenceRule != nil:
+		pending, err := s.hasPendingOccurrence(ctx, ev, due)
+		if err != nil {
+			return CareEvent{}, err
+		}
+		if pending {
+			break
+		}
 		base := due
 		if today.After(base) {
 			base = today
 		}
 		next, ok, err := NextAfter(*ev.RecurrenceRule, due, base)
 		if err != nil {
-			return CareEvent{}, apperr.Validation(map[string]string{"recurrence_rule": err.Error()})
+			return CareEvent{}, apperr.Validation(map[string]string{"recurrence_rule": "Некорректное правило повторения"})
 		}
-		if !ok {
-			_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET active = false WHERE id = $1`, eventID)
+		if ok {
+			nextDue = next
 		} else {
-			_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET next_due_at = $1 WHERE id = $2`, next, eventID)
+			active = false
 		}
-		if err != nil {
-			return CareEvent{}, err
-		}
-	} else {
-		_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET next_due_at = $1 WHERE id = $2`, due.AddDate(1, 0, 0), eventID)
-		if err != nil {
-			return CareEvent{}, err
-		}
+	case ev.RecurrenceKind == "manual":
+		nextDue = due.AddDate(1, 0, 0)
+	}
+	_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET prev_due_at = $2, prev_active = $3, completed_at = $4, next_due_at = $5, active = $6 WHERE id = $1`,
+		eventID, due, ev.Active, s.now(), nextDue, active)
+	if err != nil {
+		return CareEvent{}, err
+	}
+	return s.eventByID(ctx, eventID)
+}
+
+func (s *Service) hasPendingOccurrence(ctx context.Context, ev CareEvent, due time.Time) (bool, error) {
+	var notified sql.NullTime
+	if err := s.DB.QueryRowContext(ctx, `SELECT last_notified_for FROM care_events WHERE id = $1`, ev.ID).Scan(&notified); err != nil {
+		return false, err
+	}
+	if !notified.Valid || !notified.Time.Before(due) {
+		return false, nil
+	}
+	return ev.CompletedAt == nil || ev.CompletedAt.Before(notified.Time), nil
+}
+
+func (s *Service) UndoCompleteEvent(ctx context.Context, userID, eventID int64) (CareEvent, error) {
+	ev, err := s.ownedEvent(ctx, userID, eventID)
+	if err != nil {
+		return CareEvent{}, err
+	}
+	if !ev.CanUndo {
+		return CareEvent{}, apperr.Conflict("Отменять нечего: выполнение не найдено или прошло больше 7 дней")
+	}
+	_, err = s.DB.ExecContext(ctx, `UPDATE care_events SET next_due_at = COALESCE(prev_due_at, next_due_at), active = COALESCE(prev_active, active),
+		completed_at = NULL, prev_due_at = NULL, prev_active = NULL WHERE id = $1`, eventID)
+	if err != nil {
+		return CareEvent{}, err
 	}
 	return s.eventByID(ctx, eventID)
 }
@@ -435,7 +485,7 @@ func (s *Service) ListUpcoming(ctx context.Context, userID int64, limit int) ([]
 		limit = 6
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventCols+`, p.id, p.name, p.emoji FROM care_events e
-		JOIN plants p ON p.id = e.plant_id WHERE p.user_id = $1 AND e.active
+		JOIN plants p ON p.id = e.plant_id WHERE p.user_id = $1 AND e.active AND NOT (e.recurrence_kind = 'once' AND e.completed_at IS NOT NULL)
 		ORDER BY e.next_due_at, e.id LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -454,23 +504,6 @@ func (s *Service) ListUpcoming(ctx context.Context, userID int64, limit int) ([]
 	return out, rows.Err()
 }
 
-func (s *Service) connectedChannels(ctx context.Context, userID int64) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT channel FROM user_channels WHERE user_id = $1 AND status = 'connected' ORDER BY channel`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
 func (s *Service) SuggestCare(ctx context.Context, userID, plantID int64, speciesID int) (plantinfo.Suggestion, error) {
 	var name string
 	err := s.DB.QueryRowContext(ctx, `SELECT name FROM plants WHERE id = $1 AND user_id = $2`, plantID, userID).Scan(&name)
@@ -484,11 +517,7 @@ func (s *Service) SuggestCare(ctx context.Context, userID, plantID int64, specie
 	if err != nil {
 		return plantinfo.Suggestion{}, err
 	}
-	channels, err := s.connectedChannels(ctx, userID)
-	if err != nil {
-		return plantinfo.Suggestion{}, err
-	}
-	return s.info().Suggest(ctx, name, speciesID, today, channels)
+	return s.info().Suggest(ctx, name, speciesID, today, nil)
 }
 
 func (s *Service) SearchReference(ctx context.Context, userID int64, q string) (plantinfo.ReferenceSearch, error) {

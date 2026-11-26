@@ -69,7 +69,7 @@ func (w *OutboxWorker) claim(ctx context.Context) ([]job, error) {
 		UPDATE notification_jobs j SET scheduled_at = $3 FROM due WHERE j.id = due.id
 		RETURNING j.id, j.channel, j.title, j.body, j.attempts,
 			(SELECT uc.external_id FROM user_channels uc
-			  WHERE uc.user_id = j.user_id AND uc.channel = j.channel AND uc.status = 'connected')`,
+			  WHERE uc.id = j.recipient_id AND uc.status = 'connected')`,
 		now, batchSize, now.Add(lease))
 	if err != nil {
 		return nil, err

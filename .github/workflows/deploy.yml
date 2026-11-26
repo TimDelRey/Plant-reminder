@@ -1,0 +1,98 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FOLDER_ID: b1ggnvl23aqc50d24abi
+      REGISTRY_ID: crpckirjpiima4fphvif
+      CONTAINER_NAME: plantcare
+      RUNTIME_SA_ID: ajenbfncbumqu6luac53
+      LOCKBOX_SECRET_ID: e6qo6cah30eekfij0pv3
+      PUBLIC_URL: https://bba7lg892bj22lt0arpc.containers.yandexcloud.net
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Yandex Container Registry
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+        run: printf '%s' "$YC_SA_KEY" | docker login --username json_key --password-stdin cr.yandex
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          outputs: type=image,push=true,oci-mediatypes=false
+          tags: cr.yandex/${{ env.REGISTRY_ID }}/plantcare:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restore yc
+        id: yc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/yandex-cloud
+          key: yc-cli-v1
+
+      - name: Install yc
+        if: steps.yc-cache.outputs.cache-hit != 'true'
+        run: curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -n -i "$HOME/yandex-cloud"
+
+      - name: Configure yc
+        env:
+          YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+        run: |
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+          printf '%s' "$YC_SA_KEY" > "$RUNNER_TEMP/yc-key.json"
+          "$HOME/yandex-cloud/bin/yc" config set service-account-key "$RUNNER_TEMP/yc-key.json"
+          "$HOME/yandex-cloud/bin/yc" config set folder-id "$FOLDER_ID"
+
+      - name: Deploy new revision
+        run: |
+          yc serverless container revision deploy \
+            --container-name "$CONTAINER_NAME" \
+            --image "cr.yandex/${REGISTRY_ID}/plantcare:${GITHUB_SHA}" \
+            --cores 1 --memory 256MB --concurrency 8 --execution-timeout 180s \
+            --service-account-id "$RUNTIME_SA_ID" \
+            --environment "APP_ENV=prod,COOKIE_SECURE=true,BACKGROUND_WORKERS=false,DB_MAX_CONNS=3,NOTIFY_HOUR=9,PUBLIC_BASE_URL=${PUBLIC_URL},VK_GROUP_ID=243734482,VK_COMMUNITY_SCREEN_NAME=club243734482" \
+            --secret "environment-variable=DATABASE_URL,id=${LOCKBOX_SECRET_ID},key=DATABASE_URL" \
+            --secret "environment-variable=VK_GROUP_TOKEN,id=${LOCKBOX_SECRET_ID},key=VK_GROUP_TOKEN" \
+            --secret "environment-variable=PERENUAL_API_KEY,id=${LOCKBOX_SECRET_ID},key=PERENUAL_API_KEY" \
+            --secret "environment-variable=INTERNAL_SECRET,id=${LOCKBOX_SECRET_ID},key=INTERNAL_SECRET" \
+            --secret "environment-variable=VK_CALLBACK_SECRET,id=${LOCKBOX_SECRET_ID},key=VK_CALLBACK_SECRET" \
+            --secret "environment-variable=VK_CONFIRMATION_CODE,id=${LOCKBOX_SECRET_ID},key=VK_CONFIRMATION_CODE" \
+            > /dev/null
+
+      - name: Show failing API call
+        if: failure()
+        run: grep -ahoE 'yandex\.cloud\.[a-z0-9.]+\.[A-Za-z]+Service/[A-Za-z]+' "$HOME"/.config/yandex-cloud/logs/*.txt | awk '!seen[$0]++' || true
+
+      - name: Smoke test
+        run: |
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$PUBLIC_URL/api/openapi.yaml" || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          exit 1

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ApiError, api, errorMessage, unwrap, type CareSuggestion, type ReferenceSearch, type SuggestedEvent,
 } from "../api/client";
-import { channelMeta, fmt } from "../lib";
+import { fmt } from "../lib";
 
 type Row = { ev: SuggestedEvent; on: boolean };
 
@@ -115,9 +115,6 @@ export default function CareSuggest({ plantId, plantName, onCancel, onImported }
                     <div style={{ margin: "0 0 0 26px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       <label className="hint" htmlFor={`sg-date-${i}`}>Первая дата ({fmt(r.ev.next_due_at)})</label>
                       <input type="date" id={`sg-date-${i}`} value={r.ev.next_due_at} disabled={!r.on} data-testid="suggest-date" onChange={(e) => patch(i, { next_due_at: e.target.value })} style={{ width: "auto" }} />
-                      <span className="hint">
-                        {r.ev.channels.length ? r.ev.channels.map((c) => `${channelMeta(c)?.icon ?? ""} ${channelMeta(c)?.name ?? c}`).join(", ") : "каналы не выбраны — подключите их на вкладке «Каналы»"}
-                      </span>
                     </div>
                     {(fe("next_due_at") || fe("title") || fe("recurrence_rule")) && <div className="field-error" role="alert">{fe("next_due_at") ?? fe("title") ?? fe("recurrence_rule")}</div>}
                   </div>
