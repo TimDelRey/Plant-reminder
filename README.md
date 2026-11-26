@@ -2,6 +2,11 @@
 
 Сервис для создания событий по уходу за растениями и рассылки напоминаний о них в мессенджеры: ВКонтакте, MAX и Telegram.
 
-Группа ВКонтакте: https://vk.com/club243734482
-Max
-Telegram
+1. Заходите на https://bba7lg892bj22lt0arpc.containers.yandexcloud.net/ <br>
+2. Руками создаете растение и все нужные ему события или через нейронку по доке https://bba7lg892bj22lt0arpc.containers.yandexcloud.net/api/docs <br>
+3. Добавляете каналы для уведомлений <br>
+Получаете уведы => становитесь суперагрономами
+
+Группа ВКонтакте: https://vk.com/club243734482 <br>
+Max <br>
+Telegram <br>
