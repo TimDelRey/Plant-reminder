@@ -86,7 +86,9 @@ jobs:
 
       - name: Show failing API call
         if: failure()
-        run: grep -ahoE 'yandex\.cloud\.[a-z0-9.]+\.[A-Za-z]+Service/[A-Za-z]+' "$HOME"/.config/yandex-cloud/logs/*.txt | awk '!seen[$0]++' || true
+        run: |
+          calls=$(grep -ahoE 'yandex\.cloud\.[a-z0-9.]+\.[A-Za-z]+Service/[A-Za-z]+' "$HOME"/.config/yandex-cloud/logs/*.txt | awk '!seen[$0]++' | paste -sd ' ' -)
+          echo "::error title=Yandex Cloud API calls::${calls:-no calls found}"
 
       - name: Smoke test
         run: |
